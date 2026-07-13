@@ -1,90 +1,88 @@
 # ROADMAP — AI Agent Portfolio Build Order
 
-**Fifteen projects.** The original 8 (from `AI-Agent-Project-Ideas.md`), plus 4 that Sonnet added to cover MCP authoring, RAG depth, production safety, and CI/CD (09–12), plus **3 added in the Fable-5 revision** to fill genuine 2026 gaps: **13 Agent Observability**, **14 Long-Term Memory**, **15 Computer-Use/Browser**. Full plans, first-principles teaching notes, and verified resource lists for all 15 live in `projects/<NN-name>/`. The audit of the prior version and the reasoning for the new projects are in `AUDIT.md`.
+**Eighteen projects.** The original 8 (from `AI-Agent-Project-Ideas.md`), + 4 Sonnet added for MCP authoring / RAG depth / safety / CI/CD (09–12), + 3 from the Fable-5 revision for observability / memory / computer-use (13–15), + **3 from the final gap sweep of `500-AI-Agents-Projects`** for the last genuinely-uncovered patterns: **16 Multimodal**, **17 Voice/Real-Time**, **18 Local/Offline**. Full plans, first-principles teaching notes, and verified resource lists for all 18 live in `projects/<NN-name>/`. `AUDIT.md` records the audit of the prior version; **`LEARNING-GUIDE.md` is the companion to this file** — it explains every project (what it is, real-world use, skills, where they go next) in the exact order below. This ROADMAP and LEARNING-GUIDE are one source of truth; if they ever disagree, they're both wrong.
 
-## Shared contracts (read this first — it's what makes the set cohere)
+## Shared contracts (read first — what makes the set cohere)
 
-Two contracts, introduced in the revision, connect the projects. Pin them before building anything that crosses a project boundary:
+- **Target Agent Contract.** A compliant agent exposes HTTP `/invoke` returning `{output, trajectory, version, cost_usd, latency_ms}`, where `trajectory` is the ordered tool calls with tokens/latency (or an OTel GenAI export). **Emitted by** 01, 02, 05, 08, 15, 16. **Consumed by** 03 (eval), 11 (guardrail), 12 (release gate), 17 (voice brain). **Reference implementation:** Project 13.
+- **MCP Server Contract.** stdio locally, **Streamable HTTP** remotely (not deprecated SSE), Inspector-clean, typed schemas. Used by 04, 08, 09.
 
-- **Target Agent Contract.** A compliant agent exposes an HTTP `/invoke` that returns `{output, trajectory, version, cost_usd, latency_ms}`, where `trajectory` is the ordered tool calls with tokens/latency (or an OpenTelemetry GenAI export of the same). **Emitted by** 01, 02, 05, 08, 15. **Consumed by** 03 (eval), 11 (guardrail allow-list), 12 (release gate). **Reference implementation:** Project 13 (OTel). This resolves the black-box-vs-introspection contradiction that ran through Sonnet's 03/11.
-- **MCP Server Contract.** stdio locally, **Streamable HTTP** remotely (not the deprecated SSE), Inspector-clean, typed schemas. Used by 04, 08, 09.
+## The definitive build order (optimized for cumulative learning)
 
-## Why this order
+Ordered so each project reuses the previous ones' skills. `⟶` = hard prerequisite (needs its output/interface); `~` = soft reuse (reuses an idea/corpus). Durations are part-time (10–15 hrs/wk).
 
-Sequenced by **dependencies** (some projects need another's output) and **skill compounding** (each stage reuses the last), not numeric order.
+| # | Project | New skills it introduces | Reinforces | Prereqs | Dur. |
+|---|---|---|---|---|---|
+| 1 | **01 Financial Research Analyst** | Supervisor multi-agent, agentic/corrective RAG, reflection, tool design, deploy | — | — | 4–6 wk |
+| 2 | **13 Agent Observability** | OTel GenAI tracing, cost/latency attribution, the Target Agent Contract | multi-agent internals | 01 | 3–4 wk |
+| 3 | **10 RAG Architecture Bake-Off** | 4 RAG variants, controlled experiments, RAGAS | RAG, eval rigor | 01~ | 3–4 wk |
+| 4 | **03 Eval & Observability Platform** | LLM-as-judge + calibration, simulated users, regression detection | evals, the Contract | 01⟶, 13~ | 4–6 wk |
+| 5 | **09 MCP Server Trilogy** | MCP *authoring* + publishing (PyPI + registry), protocol compliance | API design | — | 3 wk |
+| 6 | **04 MCP Personal Ops Agent** | MCP *consumer*, proactive scheduling, approval gate, memory-lite | MCP, HITL | 09⟶ | 3–4 wk |
+| 7 | **14 Long-Term Memory System** | Episodic/semantic/procedural memory, consolidation/forgetting policies | memory, benchmarking | 04⟶ | 4 wk |
+| 8 | **08 A2A Multi-Framework Network** | A2A protocol, framework-agnostic orchestration, MCP+A2A together | interop, MCP | 01⟶, 04~ | 3–4 wk |
+| 9 | **02 Document-Processing HITL Pipeline** | Durable execution (interrupt/resume), idempotency, audit, deterministic rules | HITL, the Contract | — | 4–6 wk |
+| 10 | **11 Agent Guardrail Gateway** | Safety middleware, PII redaction, injection defense, rate/spend limits | safety, the Contract | 01⟶/02⟶ | 3–4 wk |
+| 11 | **12 Agent Release Gate (CI/CD)** | Eval-as-CI, reusable GitHub Action, baseline-relative regression | evals, packaging | 03⟶, 01⟶, 02⟶ | 3–4 wk |
+| 12 | **16 Multimodal Document Intelligence** | Vision-language, layout-aware doc AI, visual retrieval (ColPali-style) | RAG, retrieval, citation | 10~, 01~ | 4 wk |
+| 13 | **05 Self-Healing SQL Analytics Agent** | Text-to-SQL, self-correction loop, structural (read-only) safety, benchmarking | bounded retry, safety | — | 3–4 wk |
+| 14 | **18 Local / Offline Open-Weight Agent** | Self-hosting, quantization, grammar-constrained decoding, hosted-vs-local analysis | structured output, benchmarking | 05⟶ (port) | 3–4 wk |
+| 15 | **06 Codebase Onboarding Agent** | AST-aware chunking, code retrieval (hybrid), verified citation, static analysis | RAG, grounded citation | — | 4–5 wk |
+| 16 | **15 Computer-Use / Browser Agent** | GUI perception (a11y+vision), action spaces, recovery, irreversible-action gate | vision grounding, safety | — | 4–5 wk |
+| 17 | **17 Voice / Real-Time Agent** | Streaming STT/LLM/TTS, latency budgeting, barge-in, turn detection | real-time systems, reuse | 04⟶/01⟶ (brain), 13~ | 3–4 wk |
+| 18 | **07 Red-Team vs Blue-Team Arena** | FSM-constrained orchestration, isolated eval labs, security metrics | orchestration, safety framing | — | 4–5 wk |
 
-## Stage 1 — Foundations (~weeks 1–4)
-
-**01 · Multi-Agent Financial Research Analyst.** Build first. It teaches the supervisor pattern, agentic/corrective RAG, tool design, and a reflection loop — the skills every later project reuses or references — and it's the first emitter of the Target Agent Contract. Nearly everything downstream points at 01, reuses its specialists, or reuses its ingested data.
-
-## Stage 2 — Prove It Works & See Inside (~weeks 5–8)
-
-**13 · Agent Observability Stack** → **10 · RAG Architecture Bake-Off** → **03 · Agent Evaluation & Observability Platform**
-
-With one agent built, make it *observable* and *proven*. **13 first** (moved early in the revision): instrument Project 01 with OpenTelemetry, which makes the Target Agent Contract real and gives you traces to debug everything that follows. **10** deepens the RAG pattern you used once in 01 (reusing its corpus) into a controlled 4-variant comparison. **03** then builds the eval harness, pointed at 01 as its first Contract-compliant target. You now have an agent, proof it works, and the ability to see why when it doesn't.
-
-*Dependencies:* 13 and 03 need Project 01; 03 consumes the Contract that 13 implements. 10 reuses 01's corpus.
-
-## Stage 3 — Protocols (~weeks 9–12)
-
-**09 · MCP Server Trilogy** → **04 · MCP-Native Personal Ops Agent** → **14 · Long-Term Memory System** → **08 · A2A Multi-Framework Network**
-
-Protocol + statefulness literacy. **09** teaches MCP *authoring* (the rarer half) in isolation and publishes to the official registry. **04** makes you your own first consumer of MCP servers, adding proactive scheduling and a first taste of memory. **14** then makes memory a first-class system and swaps into 04 as its reuse proof. **08** rebuilds 01's specialists across 3 frameworks over A2A — interoperability, not single-framework proficiency.
-
-*Dependencies:* 04 works best after 09 (consume your own servers); 14 plugs into 04; 08 needs 01's specialists to port.
-
-## Stage 4 — Production Patterns (~weeks 13–17)
-
-**02 · Document-Processing HITL Pipeline** → **11 · Agent Guardrail Gateway** → **12 · Agent Release Gate (CI/CD)**
-
-The patterns enterprises actually ship. **02** teaches durable interrupt/resume + idempotency (and emits the Contract). **11** builds a reusable safety gateway that reads the Contract's proposed actions; point it at 01/02. **12** packages 03's harness as an installable GitHub Action, protecting 01 and 02 as its two target repos.
-
-*Dependencies:* 11 needs 01/02 as protected targets + the Contract; 12 needs 03's harness and both 01 and 02.
-
-## Stage 5 — Specialization (optional, ~weeks 18+)
-
-Pick by target role, not all of them:
-
-- **15 · Computer-Use / Browser Agent** — the strongest live demo; pick if you want a showstopper or are targeting computer-use/automation roles.
-- **05 · Self-Healing SQL Analytics Agent** — data/analytics-engineering-adjacent; a portable Spider benchmark number.
-- **06 · Codebase Onboarding Agent** — dev-tools/platform-engineering; run it live on the interviewer's repo.
-- **07 · Red-Team vs Blue-Team Arena** — security-adjacent; strictly scoped to defensive-research/CTF framing (read its scope note first).
-
-## Dependency graph (summary)
+## Dependency graph
 
 ```
-01 ──┬──> 13 (instruments 01; implements Target Agent Contract)
-     ├──> 10 (reuses 01 corpus)
-     ├──> 03 (evaluates 01; consumes Contract from 13) ──> 12 (packages 03's harness)
-     ├──> 08 (reuses 01's specialists across frameworks)
-     └──> 11 (protects 01/02; reads Contract) 
-02 ──┬──> 11
-     └──> 12 (second target repo)
-09 ──> 04 (consumes 09's servers) ──> 14 (memory system plugs into 04)
-15 (standalone; emits Contract)   05 · 06 · 07 (standalone specializations)
+01 ─┬─> 13 (instruments 01; defines Target Agent Contract)
+    ├─> 10 (RAG depth; reuses 01 corpus)
+    ├─> 03 (evaluates 01; consumes Contract) ─> 12 (packages 03's harness)
+    ├─> 08 (reuses 01's specialists over A2A)
+    ├─> 11 (protects 01/02; reads Contract)
+    └─> 16 (reuses 01 corpus + 10's RAG)
+02 ─┬─> 11
+    └─> 12 (second target repo)
+09 ─> 04 (consumes 09's servers) ─┬─> 14 (memory plugs into 04)
+                                   └─> 17 (voice reuses 04 as its brain)
+05 ─> 18 (ports 05 to local models)
+15 · 06 · 07 (standalone; 15 & 16 emit the Contract)
 ```
+
+## What can be built in parallel
+
+- After **01 + 13**, the **RAG track (10)** and the **MCP track (09)** are independent — run them in parallel if you have the bandwidth.
+- **05, 06, 07** are mutually independent single-agent projects — any order, or parallel.
+- **16 and 15** (vision modality vs. GUI modality) are independent of each other.
+- **11 and 12** both need production targets (01/02) but are otherwise independent.
+Everything else is best done in the listed order because each hard-depends on an earlier project's output or interface.
+
+## Resume checkpoints (when you have something worth showing)
+
+- **After #4 (03):** ✅ **First shippable portfolio.** A deployed multi-agent system (01), instrumented with traces (13), with a data-backed eval harness proving it works (03). This trio alone is a stronger portfolio than most candidates have. *Start applying here.*
+- **After #8 (08):** ✅ **Protocol-fluent.** You now demonstrate MCP authoring (09), MCP consumption + memory (04, 14), and A2A interop (08) — the 2026 protocol stack most candidates lack.
+- **After #11 (12):** ✅ **Production-grade.** Durable HITL (02), a reusable safety gateway (11), and eval-as-CI (12) — the "I ship agents responsibly" story.
+- **After #16 (15) / #17 (17):** ✅ **Multimodal breadth.** Vision documents (16), GUI automation (15), and voice (17) — you cover every input modality, which very few candidates do.
 
 ## Timelines
 
 | Track | Scope | Realistic timeline |
 |---|---|---|
-| **Full mastery** | All 15 | ~7–10 months part-time (10–15 hrs/wk); ~4–5 months full-time |
-| **Core production portfolio** | 01 + 13 + 03 + 09 + 02 | ~3–3.5 months part-time — the coherent story: *build → observe → prove → author protocols → ship a durable pattern* |
-| **Minimum viable** | 01 + 03 + one of (09 / 08) | ~2–2.5 months part-time — *builds agents → proves they work → makes them interoperable* |
-| **Fast-track to interview-ready** | 01 alone, fully polished (deployed, evaluated, strong README) | quality over quantity beats 3 half-finished projects |
+| **Full mastery** | All 18 | ~9–13 months part-time; ~5–6 months full-time |
+| **Core production portfolio** | 01 + 13 + 10 + 03 + 09 + 04 + 02 | ~4–5 months part-time — build → observe → prove → author protocols → ship a durable pattern |
+| **Minimum viable** | 01 + 13 + 03 | ~2–2.5 months part-time — a built, observable, *proven* agent (Resume Checkpoint 1) |
+| **Fast-track** | 01 alone, fully polished (deployed, evaluated, strong README) | quality over quantity beats 3 half-finished projects |
 
-## Lead with these on your resume (the showcase ranking)
+## Lead with these on your resume (showcase ranking)
 
-The spec asked which projects to *showcase first*. Ranked by hiring signal per unit of reviewer attention:
+1. **01 · Financial Research Analyst** — the capstone (multi-agent + CRAG + reflection + metrics + live deploy).
+2. **03 · Eval & Observability Platform** — the rarest skill (calibrated judge, injected-regression tests).
+3. **15 · Computer-Use / Browser Agent** or **16 · Multimodal** — the demo that makes people stop scrolling (live screencast / boxed-region answer).
+4. **09 · MCP Server Trilogy** — a *published* artifact (PyPI + official MCP Registry) anyone can install.
+5. **13 · Agent Observability** — production maturity (OTel, cost/latency dashboards).
 
-1. **01 · Financial Research Analyst** — the capstone. Multi-agent orchestration + CRAG + reflection + a metrics table + a live deploy. Leads every resume.
-2. **03 · Eval & Observability Platform** — the rarest skill. "I can prove an agent works and catch a regression, with calibrated judge agreement (κ) and injected-regression tests." Almost no candidate has this.
-3. **15 · Computer-Use / Browser Agent** — the demo that makes people stop scrolling. A live screencast of an agent completing a real web task, with a safety gate.
-4. **09 · MCP Server Trilogy** — a *published* artifact (PyPI + official MCP Registry) anyone can `pip install`. Concrete and checkable.
-5. **13 · Agent Observability** — signals production maturity (OTel GenAI conventions, cost/latency dashboards) that separates "I built a demo" from "I can operate agents."
+Put 1–3 above the fold; mention 4–5 as "also built." The rest is interview depth.
 
-Put 1–3 above the fold; mention 4–5 as "also built." The remaining projects are depth you discuss in interviews, not headline bullets.
+## Note on the final gap sweep
 
-## A note on the revision
-
-This roadmap replaces the 12-project version. `AUDIT.md` records what the prior plans got right, what was deepened, and why the three new projects were added rather than cut/merged (nothing was cut — 03↔12 and 04↔09 overlaps are intentional layering, sharpened in each plan). Resource paths in every project were re-verified against fresh upstream clones — most notably, the LangGraph tutorials the old plans reported as "404, find them yourself" are simply relocated to `langgraph/examples/` and are now cited exactly. The `500-AI-Agents-Projects` source (its `agents/` folder of 20 runnable examples and `crewai_mcp_course`) was browsed directly to ground the new-project choices in real 2026 hiring signals: observability, stateful/memory agents, and computer-use.
+Every one of the 146 entries in `500-AI-Agents-Projects` (industry, CrewAI, AutoGen, Agno, LangGraph tables) was checked against the existing set. Three genuine, uncovered patterns were added — **multimodal (16)**, **voice (17)**, **local/offline (18)** — each mapping to an AutoGen or LangGraph row the portfolio didn't touch. Candidates were *declined* where they'd be padding: plan-and-execute / deep-research (covered by 01's orchestration + 15's planner + 03's reflection), the many domain apps (health/trading/tutor/recsys/logistics — applications of already-covered patterns, not new patterns), and niche orchestration variants (AgentBuilder, Society-of-Mind). The portfolio now covers every distinct, hireable 2026 pattern in the source repo.
