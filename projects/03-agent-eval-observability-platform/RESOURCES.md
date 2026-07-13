@@ -1,34 +1,38 @@
 # RESOURCES.md — Agent Evaluation & Observability Platform
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING · ⚠️ STALE/RESTRUCTURED (with recovery instructions).
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed (HTTP 200 or present in clone).
 
 ## 1. What to clone / download
 
-### LangGraph Chatbot Simulation Evaluation tutorial
-
+### LangGraph chatbot-simulation-evaluation tutorial
 ```bash
 git clone --depth 1 https://github.com/langchain-ai/langgraph.git /tmp/ref-langgraph
-find /tmp/ref-langgraph -iname "*simulation*" -o -iname "*simulat*"
 ```
-**⚠️ STALE/RESTRUCTURED.** The curated link (`docs/docs/tutorials/chatbot-simulation-evaluation/agent-simulation-evaluation.ipynb`) 404s on `main` as of 2026-07-13 — same LangGraph docs reorganization flagged in Project 01/02's RESOURCES.md. This is the single most directly relevant reference in the whole portfolio for this project — worth the extra effort of `find`-ing its current location (or checking LangGraph's live docs site) rather than skipping it.
+Moved to `examples/` — verified path: **`examples/chatbot-simulation-evaluation/agent-simulation-evaluation.ipynb`** ✅ (there's also a `langsmith-agent-simulation-evaluation.ipynb` variant). The single most directly relevant reference — adapt its simulator↔target loop; you extend it with adversarial personas + a separate judge pass.
 
-### AutoGen AgentEval and AgentOps notebooks
-
+### AutoGen AgentEval + AgentOps notebooks (read-only)
 ```bash
-curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agenteval_cq_math.ipynb
-curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_agentops.ipynb
+curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agenteval_cq_math.ipynb        # ✅ 200
+curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_agentops.ipynb        # ✅ 200
 ```
-Status: ✅ CONFIRMED WORKING (both returned HTTP 200). AgentEval shows a multi-agent-critic approach to grading a target system's outputs — a useful alternative design to a single judge LLM if you want to experiment with a "panel of judges." AgentOps shows tracing/observability instrumentation patterns for tool calls, cost, and errors — directly relevant to the Trace Collector.
+⚠️ These are on the **`0.2` branch**, which is **legacy** — the AutoGen repo is in maintenance mode (superseded by `autogen-agentchat` 0.4+ / Microsoft Agent Framework). Fine as read-only design references: AgentEval shows a criteria-generation-then-quantify "panel of judges" alternative; AgentOps shows what to instrument (tokens, tool errors, latency) — cross-check your Trace/Judgment schema against it.
+
+### RAGAS (if the target does RAG)
+```bash
+git clone --depth 1 https://github.com/explodinggradients/ragas.git /tmp/ref-ragas   # ✅
+pip install ragas
+```
+Gives faithfulness/answer-relevancy/context-precision for free if the target (Project 01) exposes retrieved context in its trajectory. Check current metric import names against the installed version.
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| LangGraph Chatbot Simulation Evaluation (once located) | Adapt — reuse the two-agent (simulator ↔ target) loop structure; you extend it with adversarial personas and a separate judge pass, which the tutorial doesn't cover in depth | Phase 1, 2 |
-| AutoGen AgentEval notebook | Read-only, optional adaptation — study the "criteria generation then quantify" approach as an alternative judge design if a single-LLM judge feels under-calibrated | Phase 3 |
-| AutoGen AgentOps notebook | Read-only — study what fields they instrument (tokens, tool errors, latency) to make sure your Trace Collector schema doesn't miss anything standard | Phase 0, 1 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| LangGraph simulation-eval | `examples/chatbot-simulation-evaluation/agent-simulation-evaluation.ipynb` | Adapt — simulator↔target loop | 1, 2 |
+| AutoGen AgentEval (0.2, legacy) | `notebook/agenteval_cq_math.ipynb` | Read-only — panel-of-judges alternative | 3 |
+| AutoGen AgentOps (0.2, legacy) | `notebook/agentchat_agentops.ipynb` | Read-only — instrumentation fields | 0, 1 |
+| RAGAS | repo/`pip install ragas` | Reuse — RAG-subcomponent metrics | 3 |
 
-## 3. Also useful (not agent code, but load-bearing for this project)
-
-- **RAGAS** (`pip install ragas`) — if your target agent (Project 01) exposes intermediate retrieved context, RAGAS gives you faithfulness/answer-relevancy/context-precision metrics for the RAG sub-component for free, rather than hand-rolling those specific metrics in your judge rubric. Check RAGAS's own docs/GitHub for current API — it has changed versions since any older tutorial you might find.
-- **OWASP LLM Top 10** (owasp.org) — read the prompt-injection entry before writing your adversarial persona scenarios in Phase 2, so the injection attempts you simulate reflect real known patterns rather than invented ones.
+## 3. Also load-bearing (non-code)
+- **OWASP LLM Top 10** (`github.com/OWASP/www-project-top-10-for-large-language-model-applications` ✅) — read LLM01 (prompt injection) before writing the adversarial personas so they reflect real patterns.
+- **Cross-project:** the Target Agent Contract this harness consumes is defined in Projects 01/02 §2 and implemented as OTel export by Project 13. Read those before Phase 0.

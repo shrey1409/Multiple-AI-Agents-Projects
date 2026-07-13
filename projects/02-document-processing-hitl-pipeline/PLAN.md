@@ -2,127 +2,187 @@
 
 ## 1. Objective & Success Criteria
 
-Build a LangGraph state machine that watches an inbox for documents (invoices, claims, contracts), classifies each, extracts structured fields, validates against business rules, and — for anything risky or low-confidence — pauses and asks a human for approval (Slack/email) before executing the resulting action (DB write, reply, ticket). Every action must be idempotent and logged. This is the single most common real-world enterprise agent pattern; the deliverable proves you can build durable, auditable, human-gated automation, not just a demo.
+Build a LangGraph state machine that watches an inbox for documents (invoices, claims, contracts), classifies each, extracts structured fields, validates against business rules, and — for anything risky or low-confidence — pauses via `interrupt()` and asks a human for approval (Slack) before executing the resulting action (DB write, reply, ticket). Every action is idempotent and logged. This is the most common real-world enterprise agent pattern; the deliverable proves durable, auditable, human-gated automation.
 
-| Metric | Target |
-|---|---|
-| Extraction accuracy on a 500-document eval set (field-level F1) | ≥95% |
-| Documents correctly routed to human review (recall on "should have been flagged") | 100% (false negatives here are the dangerous failure mode) |
-| False-positive HITL rate (flagged but shouldn't have been) | <15% (too high = humans stop trusting the queue) |
-| End-to-end latency for auto-approved documents | <30s |
-| Every executed action has a corresponding audit log row | 100% |
-| Duplicate/replayed document produces zero duplicate actions | 100% (idempotency) |
+| Metric | Target | How measured |
+|---|---|---|
+| Extraction field-level F1 on a 500-doc synthetic eval set | ≥95% | ground truth is generated alongside each doc (§5) |
+| HITL routing recall ("should have been flagged" caught) | 100% | hand-labeled 50-doc subset; false negatives are the dangerous failure |
+| HITL false-positive rate (flagged but needn't be) | <15% | same subset; too high burns reviewer trust |
+| End-to-end latency, auto-approved path | <30s | excludes wait-for-human |
+| Executed actions with an audit row | 100% | code-checked against `audit_log` |
+| Duplicate/replayed doc → duplicate actions | 0 | idempotency replay test (§6) |
 
 ## 2. Architecture
 
 ```mermaid
 flowchart TD
-    IN["Inbox watcher (new doc)"] --> CL[Classifier Agent]
-    CL --> EX[Extraction Agent]
-    EX --> VA[Validation Agent]
-    VA -->|confidence high, rules pass| AC[Execute Action]
-    VA -->|confidence low OR rule violation| HITL["interrupt(): Human Approval (Slack/email)"]
+    IN["Inbox watcher (new doc)"] --> CL[Classifier]
+    CL --> EX[Extraction]
+    EX --> VA[Validation - rules engine]
+    VA -->|confidence high AND rules pass| AC[Execute Action]
+    VA -->|low confidence OR rule violation| HITL["interrupt(): Human Approval (Slack)"]
     HITL -->|approved| AC
-    HITL -->|rejected| RJ[Log Rejection + Notify Submitter]
+    HITL -->|rejected| RJ[Log Rejection + Notify]
     HITL -->|timeout| ESC[Escalate to Secondary Reviewer]
-    AC --> LOG[(Postgres: audit log, idempotency keys)]
+    AC --> LOG[(Postgres: audit_log + idempotency_keys)]
     RJ --> LOG
     ESC --> HITL
 ```
 
-### Agent roster
+### Agent/component roster
 
-| Agent | Role | Tools | Reads (state) | Writes (state) |
+| Component | Role | Tools | Reads | Writes |
 |---|---|---|---|---|
-| Classifier | Determines document type (invoice/claim/contract/other) | LLM w/ structured output | `raw_document` | `doc_type`, `classification_confidence` |
-| Extraction | Pulls structured fields per doc type (amount, parties, dates, line items) | LLM w/ Pydantic schema per `doc_type`, OCR tool if scanned | `raw_document`, `doc_type` | `extracted_fields`, `extraction_confidence` |
-| Validation | Checks extracted fields against business rules (amount thresholds, required fields present, duplicate detection) | rules engine (plain code, not LLM), duplicate-hash lookup against Postgres | `extracted_fields`, `doc_type` | `validation_result`, `requires_human` |
-| Human Approval (interrupt node) | Pauses the graph, notifies a human, resumes on their decision | Slack/email webhook | `extracted_fields`, `validation_result` | `human_decision`, `decision_timestamp` |
-| Action Executor | Performs the actual side-effecting action, idempotency-checked | DB write / email send / ticket-create tool | `extracted_fields`, `human_decision` | `action_result`, `idempotency_key` |
-| Audit Logger | Writes an immutable record of every state transition | Postgres insert | (reads everything) | (writes to `audit_log` table, not graph state) |
+| Classifier | Doc type (invoice/claim/contract/other) | LLM structured output | `raw_document` | `doc_type`, `classification_confidence` |
+| Extraction | Typed fields per doc type | LLM w/ per-type Pydantic schema; OCR if scanned | `raw_document`, `doc_type` | `extracted_fields`, `extraction_confidence` |
+| Validation | Business rules + duplicate detection | deterministic rules engine (code), duplicate-hash lookup | `extracted_fields`, `doc_type` | `validation_result`, `requires_human` |
+| Human Approval | Suspends graph, notifies human, resumes on decision | Slack Block Kit + resume webhook | `extracted_fields`, `validation_result` | `human_decision`, `decision_timestamp`, `decided_by` |
+| Action Executor | Side-effecting action, idempotency-checked | DB write / email / ticket tool | `extracted_fields`, `human_decision` | `action_result`, `idempotency_key` |
+| Audit Logger | Immutable record of every transition | Postgres insert | (reads all) | `audit_log` table |
 
 ### State schema (pseudocode)
 
 ```python
+class InvoiceFields(TypedDict):
+    vendor: str; invoice_number: str; amount: float; currency: str
+    due_date: str; line_items: list[dict]
+
+class ClaimFields(TypedDict):
+    claimant: str; policy_number: str; claim_amount: float
+    incident_date: str; claim_type: str
+
+class ContractFields(TypedDict):
+    counterparty: str; effective_date: str; term_months: int
+    total_value: float; auto_renew: bool; governing_law: str
+
+ExtractedFields = InvoiceFields | ClaimFields | ContractFields   # discriminated by doc_type
+
+class ValidationVerdict(TypedDict):
+    passed: bool
+    violations: list[str]          # names of rules that fired, e.g. "amount_over_10k"
+    risk_score: float              # 0-1, from business impact, NOT confidence
+
 class DocumentState(TypedDict):
-    document_id: str                 # stable hash of raw content, used for idempotency
+    document_id: str               # sha256 of raw content — idempotency root
     raw_document: bytes | str
     doc_type: Literal["invoice","claim","contract","other"] | None
     classification_confidence: float
-    extracted_fields: dict | None     # schema varies by doc_type, validated via Pydantic per-type model
+    extracted_fields: ExtractedFields | None
     extraction_confidence: float
-    validation_result: ValidationVerdict | None   # {passed: bool, violations: list[str]}
+    validation_result: ValidationVerdict | None
     requires_human: bool
-    human_decision: Literal["approved","rejected", None]
+    human_decision: Literal["approved","rejected"] | None
+    decided_by: str | None
     decision_timestamp: str | None
-    action_result: ActionResult | None
+    action_result: dict | None
     idempotency_key: str
     retry_count: int
 ```
 
-**Communication pattern:** linear pipeline with one conditional branch (`requires_human`) and one true interrupt point. Use LangGraph's `interrupt()` primitive at the Human Approval node — this suspends graph execution and persists state via a checkpointer; a separate resume call (triggered by the Slack/email webhook callback) supplies `human_decision` and continues the graph. This is fundamentally different from a polling loop — the process can be down for hours and resume exactly where it left off.
+### Where `extraction_confidence` actually comes from (the gap Sonnet left open)
+
+LLM self-reported confidence ("I'm 90% sure") is **not** trustworthy. Decision: compute confidence by **self-consistency** — run extraction 3× at temp 0.4, and set `extraction_confidence` = fraction of the 3 runs that agree on each critical field (amount, counterparty, dates), averaged. Fields that disagree across runs are the low-confidence ones and drive `requires_human`. This is cheap (3 short calls) and grounded in observed disagreement, not the model's opinion of itself. (Alternative if your provider exposes logprobs: mean top-token logprob over extracted field spans. Pick self-consistency for portability.)
+
+### Business-rules starter catalog (deterministic, code — not LLM)
+
+| Doc type | Rule (fires → `requires_human`) | Threshold |
+|---|---|---|
+| invoice | `amount_over_threshold` | amount > $10,000 |
+| invoice | `unknown_vendor` | vendor not in approved-vendor table |
+| invoice | `duplicate_invoice_number` | (vendor, invoice_number) seen before |
+| claim | `high_value_claim` | claim_amount > $5,000 |
+| claim | `stale_incident` | incident_date > 90 days before submission |
+| contract | `auto_renew_present` | auto_renew == True |
+| contract | `high_value_or_long_term` | total_value > $50k OR term_months > 24 |
+| any | `low_extraction_confidence` | extraction_confidence < 0.8 |
+
+`risk_score` is a separate axis from confidence: a $12 invoice at 60% confidence is low risk; a $2M invoice at 95% is high risk. Route to human on `risk_score` **combined with** confidence, never confidence alone.
+
+### DB schema (DDL sketch)
+
+```sql
+CREATE TABLE idempotency_keys (
+  idempotency_key TEXT PRIMARY KEY,   -- sha256(document_id + action_type)
+  action_result   JSONB NOT NULL,
+  created_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE audit_log (
+  id             BIGSERIAL PRIMARY KEY,
+  document_id    TEXT NOT NULL,
+  transition     TEXT NOT NULL,        -- 'classified','extracted','validated','approved','executed','skipped_duplicate',...
+  payload        JSONB,                -- NEVER stores raw PII beyond what's needed
+  decided_by     TEXT,
+  created_at     TIMESTAMPTZ DEFAULT now()
+);
+```
+
+**Communication pattern.** Linear pipeline, one conditional branch (`requires_human`), one true interrupt. Use LangGraph `interrupt()` at the Human Approval node — it suspends and persists state via the **Postgres** checkpointer; a separate resume call (triggered by the Slack webhook) supplies `human_decision` and continues. The process can be down for hours and resume exactly where it left off — fundamentally different from a polling loop.
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| LangGraph `interrupt`/checkpoint | Purpose-built for pause-for-human-then-resume; state survives process restarts | A hand-rolled polling loop against a status column — reinvents what LangGraph already solved, and is easy to get wrong (races, lost updates) |
-| Postgres (not Redis) for state + audit log | You need durable, queryable, ACID-compliant history for an audit log — this is the one place in the whole portfolio where "just use Redis" is the wrong call | Redis — fine as a queue/cache, wrong as the system of record for auditability |
-| Slack Bot API (Block Kit approval buttons) for human notification | Native "Approve/Reject" buttons, webhook callback is straightforward | Email-only — works but adds friction (parsing free-text replies); keep as a fallback channel, not primary |
-| Deterministic rules engine (plain Python, not an LLM call) for Validation | Business rules ("amount > $10k needs approval") must be exact and auditable, not probabilistic | LLM-as-validator — non-deterministic, and you cannot explain to an auditor why a threshold check "felt" different across runs |
-| Content-hash based `document_id` | Cheap, deterministic idempotency key that doesn't depend on external doc metadata | UUID per upload — doesn't detect the same document uploaded twice |
+| LangGraph `interrupt`/checkpoint | Purpose-built pause-for-human-then-resume; survives restarts | Hand-rolled status-column polling — racy, reinvents this |
+| Postgres (not Redis) for state + audit | Durable, queryable, ACID audit trail | Redis — fine as cache/queue, wrong as system-of-record |
+| Slack Block Kit approval buttons | Native Approve/Reject, clean webhook callback | Email-only — free-text reply parsing; keep as fallback |
+| Deterministic rules engine (plain Python) | Exact, auditable ("amount>$10k fired") | LLM validator — non-deterministic, unexplainable to an auditor |
+| Content-hash `document_id` | Cheap deterministic idempotency root | UUID per upload — misses the same doc uploaded twice |
+| Self-consistency confidence | Grounded in observed disagreement | LLM self-reported confidence — a known trap |
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
-|---|---|---|---|
-| 0 — Setup | Postgres schema (audit_log, idempotency_keys, documents), sample doc set (invoices/claims/contracts, synthetic + a few real redacted samples) | Schema migrated; 20 sample docs loaded | 2–3 days |
-| 1 — Classify + Extract | Classifier + Extraction agents on the happy path | 90%+ of the 20 sample docs classified correctly, fields extracted into typed schema | 4–5 days |
-| 2 — Validation + Rules | Deterministic rules engine, duplicate detection via content hash | Rule violations correctly flag `requires_human=True`; duplicate resubmission detected | 3–4 days |
-| 3 — HITL Interrupt | `interrupt()` node wired to Slack approval buttons, resume webhook | A paused graph can be resumed hours later from a cold process start and reach the same result | 5–7 days |
-| 4 — Action + Idempotency | Action executor with idempotency guard; audit logger | Replaying the same `document_id` twice produces one action and two audit rows (one marked "skipped: duplicate") | 3–4 days |
-| 5 — Eval | 500-document eval set (mostly synthetic, some real redacted), scored per §6 | Metrics table generated and committed | 4–5 days |
-| 6 — Deploy + Escalation | Timeout/escalation path for stale approvals, Docker, FastAPI ingestion endpoint | An approval left untouched for >X hours auto-escalates to a secondary reviewer instead of hanging forever | 3–4 days |
-| 7 — Polish | README with architecture diagram, demo video of the approval flow, "Technical Decisions"/"Where it failed" | Recruiter can see the human-approval Slack flow in a 30s clip | 2–3 days |
+| Phase | Goal | Definition of Done | Tests | Est. |
+|---|---|---|---|---|
+| 0 — Setup | Postgres schema, 20 sample docs (synthetic + a few redacted) | Schema migrated; docs loaded | schema migration test | 2–3 d |
+| 1 — Classify + Extract | Classifier + Extraction happy path w/ self-consistency confidence | 90%+ of 20 docs classified, typed fields extracted | per-type extraction unit tests | 4–5 d |
+| 2 — Validation | Rules engine + duplicate detection | Violations flag `requires_human`; duplicate detected | rule-catalog unit tests, each rule fires/doesn't | 3–4 d |
+| 3 — HITL Interrupt | `interrupt()` + Slack buttons + resume webhook | **Kill the process mid-approval, restart, resume to same result** | process-restart resume test | 5–7 d |
+| 4 — Action + Idempotency | Executor with idempotency guard; audit logger | Replaying `document_id` twice → 1 action, 2 audit rows (one `skipped_duplicate`) | idempotency replay + concurrency test | 3–4 d |
+| 5 — Eval | 500-doc set scored per §6 | Metrics table committed | F1 harness | 4–5 d |
+| 6 — Deploy + Escalation | Timeout/escalation, Docker, ingestion endpoint | Untouched approval >X h auto-escalates | escalation-timer test | 3–4 d |
+| 7 — Polish | README (diagram, 30s approval-flow clip, decisions/failures) | Recruiter sees the Slack approval in a clip | — | 2–3 d |
 
 **Total: ~4–6 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- Synthetic document generator (LLM-generated invoices/claims/contracts with known ground-truth fields) for the bulk of the 500-doc eval set — real documents are hard to source without PII risk; **do not use real customer data**. A handful of publicly available redacted sample invoices/contracts (e.g., government open-data portals) can supplement for realism.
-- Slack app + bot token (free workspace) for approval buttons; or SMTP credentials if using email fallback.
-- Postgres instance (local Docker container is fine, no cloud dependency required).
-- OCR (e.g., an open-source OCR library) only if you choose to support scanned/image documents — optional stretch, not required for MVP.
+- **Synthetic generator** for the 500-doc set: prompt an LLM to emit *both* a realistic document *and* its ground-truth field JSON, varying vendor/amount/date distributions and injecting ~10% edge cases (missing field, ambiguous amount, duplicate number). Cost ≈ 500 × ~1.5k tok ≈ a few dollars. Supplement with a handful of publicly redacted samples for realism. **Never use real customer PII.**
+- Slack app + bot token (free workspace) for approval; SMTP fallback.
+- Postgres (local Docker).
+- OCR: **recommendation** — skip for MVP (generate text-native synthetic docs); add Tesseract only as a stretch for scanned images.
 
 ## 6. Eval Strategy
 
-- **Extraction accuracy:** field-level F1 against ground truth on the synthetic 500-doc set (you control ground truth since you generated it) — this is the one metric you can measure exactly, not via LLM judge.
-- **HITL routing correctness:** hand-label a subset (~50 docs) with "should a human have reviewed this" and measure recall (missed reviews are the dangerous failure) and false-positive rate (over-flagging burns reviewer trust) separately — report both, don't average them into one number.
-- **Idempotency test:** replay the same document 3x through the pipeline; assert exactly one action executed and audit log shows the other two as no-ops.
-- **Latency:** track P50/P95 separately for auto-approved vs. human-approved paths (the second includes human response time, which is not a system metric — report system-processing time only, excluding wait-for-human).
+- **Extraction F1:** field-level against generated ground truth (exact — you control it).
+- **HITL routing:** hand-label ~50 docs with "should a human review this"; report recall (missed reviews = dangerous) and false-positive rate **separately** — never averaged.
+- **Idempotency:** replay one document 3× → assert exactly one action, two audit rows marked no-op. Add a **concurrency** variant: fire two identical requests simultaneously and assert one action (tests the atomic constraint, not just sequential replay).
+- **Latency:** P50/P95 for auto-approved vs. human-approved paths separately; report system-processing time only (exclude wait-for-human).
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **The approval queue becomes a black hole** — if timeouts/escalation aren't built, documents wait forever for a reviewer who never sees the Slack message. Build the escalation path in Phase 6, not as an afterthought.
-- **Non-idempotent actions** — a network hiccup after "approved" but before "action confirmed" causes a naive retry to double-charge/double-email. The idempotency key must be checked *before* every side-effecting action, not just at ingestion.
-- **Confusing "low confidence" with "high risk."** A $12 invoice extracted with 60% confidence and a $2M invoice extracted with 95% confidence need different review policies — validation rules should combine confidence *and* business-impact thresholds, not confidence alone.
-- **LLM-based validation instead of rules-based** — teams that let the LLM "decide if this looks OK" lose auditability; a human reviewer or auditor needs to see an exact rule that fired, not a vibe.
-- **No audit trail for the human decision itself** — logging only the final action, not who approved it and when, defeats the entire point of a HITL system for compliance purposes.
-- **Testing only the happy path** — the interrupt/resume mechanism is the hardest part to get right and the easiest to skip testing; explicitly test "kill the process while a document is paused for approval, then restart and resume."
+- **Approval black hole** — no timeout/escalation → docs wait forever. Build escalation in Phase 6, not as an afterthought.
+- **Non-idempotent actions** — a crash after "approved" before "confirmed" → naive retry double-charges. Check the idempotency key **before** every side effect, atomically (DB unique constraint, not check-then-act).
+- **Confidence ≠ risk** — combine both; don't rubber-stamp high-confidence high-stakes actions.
+- **LLM-as-validator** — loses auditability; a reviewer needs the exact rule that fired.
+- **No audit of the decision itself** — log who approved and when, not just the final action.
+- **Happy-path-only testing** — the interrupt/resume mechanism is the hardest part and easiest to skip; test "kill process while paused, restart, resume".
 
 ## 8. Implementation Notes for the Executing Model
 
-- Use LangGraph's checkpointer backed by Postgres (not the in-memory saver) from Phase 3 onward — the in-memory saver will pass your demo but silently fail the "resume after a real process restart" requirement, which is the whole point of this project.
-- Design `extracted_fields` as a `Union`/discriminated Pydantic model keyed by `doc_type` — an invoice and a contract have different required fields; don't force one flat schema.
-- The Slack "Approve/Reject" webhook handler must validate the Slack request signature before trusting it — this is a real external-facing endpoint, treat it like any other webhook security surface.
-- Idempotency key = hash of (document content hash + action type), not just document hash — the same document might legitimately need two different actions over its lifecycle (e.g., re-validated after a correction).
-- Don't over-build the rules engine into a full DSL — a plain Python function per doc_type returning a list of violated rule names is sufficient and more auditable than a generic rule-config system nobody will read.
-- Escalation timeout should be configurable per document type (a $50 invoice can wait 48h; a time-sensitive claim should escalate in 4h) — don't hardcode one global timeout.
+- **Postgres checkpointer from Phase 3**, never the in-memory saver — the in-memory one passes the demo but silently fails the restart-resume requirement, which is the whole point.
+- `extracted_fields` is a **discriminated union keyed by `doc_type`** — don't force one flat schema across invoice/claim/contract.
+- **Verify the Slack request signature** before trusting the webhook — it's a real external endpoint.
+- **Idempotency key = `sha256(document_id + action_type)`** — the same doc may legitimately need two different actions over its lifecycle.
+- **Resume mapping:** the LangGraph `thread_id` is the `document_id`; the Slack message carries `document_id` in its `block_id`/`value`, so the webhook resumes the exact thread. Sketch the approval Block Kit payload: a section with the extracted summary + two buttons `{action_id: "approve"|"reject", value: document_id}`.
+- **Don't over-build the rules engine** into a DSL — one plain Python function per doc_type returning a list of violated rule names is more auditable.
+- **Escalation timeout is per doc type** (config): a $50 invoice waits 48h; a time-sensitive claim escalates in 4h.
+- **Confidence:** implement the 3-run self-consistency described in §2; store per-field agreement so `low_extraction_confidence` fires on the specific weak fields.
 
 ## 9. Definition of Done
 
-- [ ] Classifier → Extraction → Validation → (HITL or auto) → Action → Audit pipeline runs end-to-end.
-- [ ] Killing and restarting the process mid-approval correctly resumes.
-- [ ] 500-doc eval set run with the metrics table from §6 committed to the README.
-- [ ] Idempotency replay test passes.
-- [ ] Dockerized, deployed, README complete with architecture diagram + approval-flow demo clip + "Technical Decisions"/"Where it failed" sections.
+- [ ] Classify → Extract → Validate → (HITL or auto) → Action → Audit runs end-to-end.
+- [ ] Kill + restart mid-approval resumes correctly.
+- [ ] 500-doc eval with the §6 metrics table in the README.
+- [ ] Idempotency replay **and** concurrency tests pass.
+- [ ] Dockerized, deployed, README with diagram + approval-flow clip + decisions/failures.

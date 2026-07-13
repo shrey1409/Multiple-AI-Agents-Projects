@@ -1,69 +1,75 @@
 # PROFESSOR-NOTES.md — Multi-Agent Financial Research Analyst
 
-Taught as if you're a student who knows single-agent LLM apps but hasn't built a real multi-agent graph yet.
+Taught as if you're a student who knows single-agent LLM apps but hasn't built a real multi-agent graph yet. Where a concept has a mechanism underneath (not just a name), we teach the mechanism.
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why you need it first | Specific resource |
 |---|---|---|
-| Basic LangChain (LLM calls, tools, structured output with Pydantic) | Every agent in this project is a LangChain-style tool-using LLM call | LangChain "Tool calling" and "Structured output" how-to guides on the current LangChain docs site |
-| LangGraph `StateGraph` fundamentals (nodes, edges, state reducers) | The whole project is one `StateGraph` | LangGraph's own "Quickstart" — read this before touching any tutorial notebook, since notebook APIs drift (see RESOURCES.md) |
-| Embeddings & vector similarity search basics | You can't reason about CRAG's "grade the retrieval" step without knowing what a retrieval even returns | Any short primer on cosine similarity + dense retrieval; skip if you've already built a RAG app |
-| What a 10-K/10-Q filing contains (Item 1, 1A, 7, 7A sections) | Your chunking strategy is section-aware; you need to know what the sections mean | SEC's own "How to Read a 10-K" investor guide |
+| LangChain tool calling + structured output (Pydantic) | Every agent is a tool-using LLM call; the router/critic are typed outputs | LangChain docs → "How to return structured data from a model" and "How to use tools" (current docs.langchain.com) |
+| LangGraph `StateGraph` (nodes, edges, reducers, `Command`) | The whole project is one `StateGraph` with a cycle | LangGraph docs → "Quickstart" and "Low-level conceptual guide → Graphs"; read before any notebook |
+| Embeddings + cosine similarity (the actual formula) | You can't reason about CRAG's grade step without knowing what retrieval returns and why | Any dense-retrieval primer; know that similarity = `A·B / (‖A‖‖B‖)` and that it's dot product of L2-normalized vectors |
+| 10-K/10-Q structure (Items 1, 1A, 7, 7A) | Your chunking is section-aware | SEC "How to Read a 10-K/10-Q" investor guide |
 
 ## 2. Core Concepts Taught
 
 ### Supervisor pattern
-**What:** one central LLM-driven router node decides which specialist agent runs next; specialists never talk to each other directly, only report back to the supervisor through shared state.
-**Why it exists:** without a router, N agents would need N² communication paths and no single place enforces "don't call the same worker twice" or "stop after 4 workers are done." A supervisor gives you one place to put control-flow logic.
-**How it works:** the supervisor is a structured-output LLM call — not a bigger prompt, a Pydantic-typed decision (`next: Literal["market_data","news","fundamentals","quant","report","FINISH"]`). LangGraph routes based on that field via `Command(goto=...)`.
-**Where it's used here:** the single Supervisor node in §2 of PLAN.md, gating access to all four workers and the report generator.
+**What.** One central LLM-driven router decides which specialist runs next; specialists report back only through shared state.
+**Why it exists.** With N free-talking agents you get up to N² communication paths and no single place to enforce "don't run a worker twice" or "stop after 4." A supervisor centralizes control flow.
+**How it works (mechanism).** The router is not a bigger prompt — it's a **structured-output call**. Tool-calling APIs enforce a JSON schema by constraining the decoder: the model can only emit tokens consistent with the schema (constrained decoding / grammar-masked sampling), so `next` is guaranteed to be one of your `Literal` values. Contrast a ReAct loop, where the next action is parsed from free text: across T turns with per-turn parse-failure probability p, reliability is ~(1−p)^T — error compounds. A single-shot typed router removes the loop and the parsing.
+**Where here.** The Supervisor node gating all four workers + the Report Generator.
 
 ### Corrective RAG (CRAG)
-**What:** a RAG variant that grades its own retrieved chunks before generating an answer, and falls back to web search when the grade is poor.
-**Why it exists:** naive RAG blindly trusts whatever the retriever returns; if the vector store has nothing relevant (e.g., a filing wasn't ingested, or the question is about something not in the 10-K), the LLM will confidently hallucinate an answer from irrelevant chunks.
-**How it works:** retrieve top-k → a separate "grader" LLM call scores each chunk's relevance (binary or 1–5) → if the aggregate grade is below threshold, trigger a web-search tool call as a fallback source instead of (or in addition to) the weak chunks.
-**Where it's used here:** the Fundamentals Agent — it's the one worker explicitly required to use CRAG rather than plain retrieval.
+**What.** RAG that grades its retrieved chunks before generating, and falls back to web search when the grade is poor.
+**Why it exists.** Naive RAG trusts whatever the retriever returns; if nothing relevant is in the store, the LLM confidently hallucinates from irrelevant chunks.
+**How it works.** retrieve top-k → a separate grader call scores each chunk (here: **binary** 0/1, decided in PLAN §8) → if mean grade < 0.5, call the web-search tool as a fallback source. The grader failing is itself a failure mode: a wrongly-lenient grader keeps bad chunks (silent hallucination), a wrongly-strict grader triggers web fallback constantly (fundamentals barely use the filing). This is why we track `retrieval_grade` and `used_web_fallback` in state — so you can *see* which failure you have.
+**Where here.** The Fundamentals agent — the only worker required to use CRAG.
 
 ### Reflection (critic loop)
-**What:** a second LLM pass that critiques the first pass's output against an explicit rubric and can send it back for revision.
-**Why it exists:** first-draft LLM output is often subtly wrong (missing hedge language, unsupported claims, inconsistent numbers) in ways a second, differently-prompted pass catches more reliably than trying to get everything right in one shot.
-**How it works:** Report Generator produces `draft_report` → Critic scores it against a fixed rubric and returns `{approved, feedback, score}` → if not approved and under the revision cap, loop back to Report Generator with the feedback injected into its prompt.
-**Where it's used here:** the Critic/Reflection node, bounded to 2 revisions (§7 risk: unbounded reflection loops are a classic failure mode).
+**What.** A second LLM pass critiques the first against an explicit rubric and can send it back.
+**Why it exists.** First-draft output is subtly wrong (missing hedges, unsupported claims, inconsistent numbers) in ways a differently-prompted second pass catches better than trying to be perfect in one shot.
+**How it works.** Report Generator → `draft_report`; Critic returns `CritiqueVerdict{approved, score, dimension_scores, feedback}`; if not approved and under the cap, loop back with the feedback injected. Bounded to 2 revisions because unbounded reflection is a classic non-terminating failure.
+**Where here.** The Critic node.
 
-### Structured output / tool calling
-**What:** forcing an LLM response into a typed schema (Pydantic/JSON schema) instead of free text.
-**Why it exists:** free-text parsing ("next: market_data") is brittle — a single stray word breaks your router. Structured output makes routing and critique verdicts programmatically reliable.
-**Where it's used here:** the supervisor's routing decision and the critic's verdict — both are Pydantic models, never parsed strings.
+### Structured output / constrained decoding
+**What.** Forcing an LLM response into a typed schema instead of free text.
+**Why it exists.** Free-text parsing ("next: market_data") is brittle — one stray word breaks routing.
+**How (deeper).** The provider validates each sampled token against the schema and zeroes the probability of schema-violating tokens before sampling. That's why a typed router "can't" return an invalid worker name — it's not politeness, it's the decoder.
+**Where here.** The router's `RouteDecision` and the critic's `CritiqueVerdict`.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | Section-aware document chunking, vector store ingestion | Nearly every "AI engineer" JD lists RAG ingestion pipelines as a core skill |
-| 1 (Skeleton) | Minimal viable LangGraph state machine | This is the pattern you'll reuse in every other project in this portfolio |
-| 2 (Specialists) | Tool design, isolating and unit-testing a single agent | Interviewers probe "how do you test an agent" — most candidates have no answer; you will |
-| 3 (Orchestration) | Multi-agent routing, shared state design | This *is* the #1 skill gap the market cites for agent engineering roles |
-| 4 (Reflection + Eval) | Self-critique loops, building a golden eval set, LLM-as-judge rubric design | Distinguishes you from "I called an LLM in a loop" candidates |
-| 5 (Deploy) | Containerizing a multi-agent system, serving it behind an API | Recruiters explicitly filter for "did you deploy this" |
-| 6 (Polish) | Writing a technical narrative recruiters actually read | The README is often the only artifact anyone looks at for >30 seconds |
+| 0 | Section-aware chunking, vector ingestion | RAG ingestion is on nearly every AI-eng JD |
+| 1 | Minimal LangGraph state machine | The pattern every other portfolio project reuses |
+| 2 | Tool design + isolating/unit-testing one agent | "How do you test an agent?" — most candidates have no answer |
+| 3 | Multi-agent routing + shared-state design | The #1 cited agent-engineering skill gap |
+| 4 | Self-critique loops, golden sets, rubric design | Separates you from "I called an LLM in a loop" |
+| 5 | Containerizing + serving a multi-agent system behind an API | Recruiters filter on "did you deploy this" |
+| 6 | Writing a technical narrative recruiters read | The README is often the only artifact examined >30s |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **"More agents = better."** A 4-worker supervisor isn't inherently smarter than one well-prompted agent with 4 tools — the value is in isolating failure domains (a bad news-search doesn't corrupt fundamentals) and enabling independent testing, not raw agent count.
-- **Treating the critic as a rubber stamp.** If the critic's rubric is vague ("is this good?"), its score is noise. Rubric items must be checkable facts (are all 4 sections present, do citations resolve, do stated numbers match `quant_analysis`), not vibes.
-- **Believing CRAG "fixes" bad retrieval.** CRAG only tells you *when* retrieval was bad and gives you a fallback; if your chunking strategy is bad in the first place, CRAG will just fall back to web search constantly and your fundamentals section will barely use the actual filing.
-- **Confusing "supervisor" with "orchestrator that also does the work."** The supervisor should route, not synthesize — that's the Report Generator's job. Mixing the two makes the supervisor's structured-output schema balloon and become unreliable.
-- **Forgetting a turn cap.** Students routinely ship a version that works in the demo but hangs forever on an edge-case ticker because nothing caps supervisor turns or critic revisions.
+- **"More agents = better."** A 4-worker supervisor isn't smarter than one good agent with 4 tools; the value is failure isolation + independent testing, not agent count.
+- **Critic as rubber stamp.** A vague rubric ("is this good?") produces noise. Rubric items must be checkable facts (all 4 sections present, citations resolve, numbers match `quant_analysis`).
+- **"CRAG fixes bad retrieval."** It only tells you *when* retrieval was bad and gives a fallback; bad chunking → constant web fallback → fundamentals barely use the filing.
+- **Supervisor that also synthesizes.** Routing and writing are different jobs; merging them balloons the router schema and makes it unreliable.
+- **No turn cap.** Works in the demo, hangs on an edge-case ticker.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (Supervisor pattern):** Why does routing through a central supervisor scale better than letting each worker decide who to call next? What breaks if two workers are allowed to call each other directly?
+**Q1 (Supervisor).** Why does central routing scale better than letting workers pick who's next, and what breaks if two workers can call each other?
+**A1.** Central routing keeps control-flow logic in one place (one turn cap, one "don't-repeat" rule) and turns N² potential paths into N. If workers call each other, no single node can enforce termination or dedup, and you can get mutual-call cycles with no cap.
 
-**After §2 (CRAG):** If the grader LLM itself is wrong about a chunk's relevance, what's the failure mode — and is it worse or better than not grading at all?
+**Q2 (CRAG).** If the grader is wrong about a chunk, what's the failure — better or worse than not grading?
+**A2.** A lenient grader keeps irrelevant chunks → silent hallucination (worse than obvious "no answer"). A strict grader over-triggers web fallback → filing under-used. Not grading is uniformly "trust whatever came back"; grading can be *worse* when miscalibrated, which is why you measure `retrieval_grade`.
 
-**After §2 (Reflection):** Why cap the critic loop at a fixed number of revisions instead of looping until "approved == True"? What would you do with a report that never gets approved?
+**Q3 (Reflection).** Why cap the critic instead of looping until approved? What do you do with a never-approved report?
+**A3.** LLM critics can be unsatisfiable (each pass finds a new nit) → non-termination + cost blowup. Cap at 2; ship the best draft with a visible "unresolved critique" note so the failure is honest, not hidden.
 
-**After Phase 4 (Eval):** Why is "citation integrity" checked in code rather than by the LLM judge, while "grounding" is judged by the LLM? What's the general principle for deciding which checks should be deterministic vs. model-graded?
+**Q4 (Eval).** Why is citation integrity code-checked while grounding is LLM-judged?
+**A4.** Citation integrity is a deterministic fact (does index `n` exist in `sources`) — code is exact and free. Grounding ("is the claim supported") is open-ended judgment with no exact-match answer, so it needs a model. Principle: verify deterministically what you can; judge only what you can't.
 
-**After Phase 6 (Deploy/Polish):** A recruiter has 90 seconds to look at your project. What three things in the README will they check first, and does your current draft answer all three?
+**Q5 (Deploy).** A recruiter has 90 seconds. What three things do they check first, and does your README answer them?
+**A5.** (1) What does it do + a diagram; (2) does it work — the eval numbers table; (3) did you deploy it — a live link. If any is missing, the README fails the 90-second test.

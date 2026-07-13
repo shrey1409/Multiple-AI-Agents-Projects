@@ -2,64 +2,69 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| JSON-RPC basics | MCP is JSON-RPC under the hood; helps demystify "what is actually being sent" | Any short JSON-RPC 2.0 spec summary |
-| What a "tool" vs. "resource" vs. "prompt" means in MCP | You'll design your servers' interfaces around this exact vocabulary | The official Model Context Protocol specification/docs |
-| Basic OAuth 2.0 flow (if using real Calendar/GitHub APIs) | You'll hit this the moment you move off the local stub | Google's or GitHub's own OAuth quickstart |
-| Embeddings/semantic search (same as Project 01 prerequisite) | Your memory store needs this for recall | Reuse what you learned in Project 01 |
+| JSON-RPC 2.0 | MCP is JSON-RPC under the hood | JSON-RPC 2.0 spec summary (it's short) |
+| MCP tools vs. resources vs. prompts | You design your servers around this vocabulary | Official MCP spec at modelcontextprotocol.io → "Server Concepts" |
+| OAuth 2.0 flow (if real APIs) | You hit it moving off the stub | Google/GitHub OAuth quickstart |
+| Embeddings/semantic search | Memory recall needs it | Reuse Project 01's embedding prerequisite |
 
 ## 2. Core Concepts Taught
 
 ### Model Context Protocol (MCP)
-**What:** an open standard (originated by Anthropic, now broadly adopted) for how an AI application connects to external tools and data sources — a common "USB-C port" for agent tool access, instead of every app inventing its own bespoke tool-calling glue.
-**Why it exists:** before MCP, every agent framework had its own tool-definition format, so a "GitHub tool" built for one framework couldn't be reused in another. MCP standardizes the server side (what a tool provider exposes) so any compliant client can use any compliant server.
-**How it works:** an MCP *server* exposes `tools` (callable actions), `resources` (readable data), and `prompts` (reusable prompt templates) over a JSON-RPC-based protocol (stdio or HTTP+SSE transport); an MCP *client* (your agent, or Claude Desktop, or any other MCP-aware app) discovers and calls them without needing custom integration code per server.
-**Where it's used here:** the entire project's premise — you are authoring 3 MCP servers, not just calling "the calendar API" from inline agent code.
+**What.** An open standard for how an AI app connects to tools/data — a common port so every app doesn't invent bespoke tool glue.
+**Why it exists.** Before MCP, each framework had its own tool-definition format; a "GitHub tool" for one couldn't be reused in another. MCP standardizes the *server* side so any compliant client uses any compliant server.
+**How it works (mechanism + lifecycle).** Client and server first do a **capability-negotiation handshake** (`initialize` → server advertises which of tools/resources/prompts it supports, and protocol version). Then the client can `list_tools`/`call_tool`, `list_resources`/`read_resource`, etc., over JSON-RPC. Transport is **stdio** (local subprocess) or **Streamable HTTP** (remote; the older HTTP+SSE transport is deprecated). Tool schemas are generated from your Python type hints (FastMCP turns a typed function into a JSON Schema the client sees) — which is why typing matters for Inspector validation.
+**Where here.** The entire premise — you author 3 servers, not inline tool calls.
 
 ### Tool-provider vs. tool-consumer roles
-**What:** the distinction between building an agent that *uses* tools (consumer) and building the tool/server that *any* agent could use (provider/author).
-**Why it exists:** most agent tutorials teach the consumer side only (call this API from your agent); authoring a well-designed, spec-compliant, reusable server is a different and rarer skill, closer to API design than prompt engineering.
-**Where it's used here:** this project deliberately emphasizes the provider side — Project 09 (MCP Server Trilogy) goes even further into pure authoring; this project pairs authoring with being your own first consumer.
+**What.** Building the agent that *uses* tools (consumer) vs. the server *any* agent could use (provider/author).
+**Why it exists.** Most tutorials teach the consumer side; authoring a spec-compliant, reusable server is closer to API design (what's a tool vs. resource, what's idempotent, what error shape helps the caller) — a rarer skill.
+**Where here.** You do both; Project 09 goes deeper on pure authoring.
 
 ### Long-term agent memory
-**What:** persisting information across sessions (user preferences, past decisions) so an agent doesn't start from zero every conversation, retrieved via semantic search rather than replaying full transcripts.
-**Why it exists:** context windows are finite and expensive; and more importantly, "remembering" a stated preference from last week is a qualitatively different (and much more useful) capability than a stateless chatbot.
-**Where it's used here:** the Memory Store, and specifically the recall self-test in PLAN.md §6 — the part that proves the memory actually works, rather than just existing.
+**What.** Persisting info across sessions (preferences, decisions), retrieved by semantic search, not by replaying transcripts.
+**Why it exists.** Context windows are finite and expensive; and "remembering a preference from last week" is a qualitatively more useful capability than a stateless chatbot. The hard parts aren't storage — they're the **write policy** (when is something worth remembering?), **consolidation** (dedup near-duplicates), and **supersession** (handle "I changed my mind" without losing history).
+**Where here.** The Memory store with write/consolidate/supersede/decay policies (PLAN §2).
 
 ### Proactive agents
-**What:** an agent that initiates action on a schedule or trigger, rather than only responding to a user's message.
-**Why it exists:** "persistent, proactive, memory-backed agents" are called out as a flagship trend precisely because most deployed agents today are reactive chatbots; proactivity is what makes an agent feel like an assistant rather than a search box.
-**Where it's used here:** the Scheduler-triggered daily digest and proposed actions.
+**What.** An agent that initiates on a schedule/trigger, not only in response to a message.
+**Why it exists.** Most deployed agents are reactive chatbots; proactivity is what makes an assistant feel like an assistant. Its risk is precision — an untuned proactive agent is a notification firehose.
+**Where here.** The scheduler-triggered daily digest + the FP-rate metric that keeps it honest.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | MCP Inspector workflow, protocol basics | Directly hireable: "I can author and validate an MCP server" is a specific, checkable claim |
-| 1 (Notes server) | Simplest possible MCP server end-to-end | Builds confidence in the protocol mechanics before adding real external-API complexity |
-| 2 (GitHub server) | Wrapping a real, rate-limited external API as an MCP tool provider | Nearly identical to what a "build an MCP server for our internal API" task at a real job looks like |
-| 3 (Calendar server) | Handling OAuth-backed external services, resource vs. tool design decisions | Same as above, plus the OAuth experience most agent tutorials skip |
-| 4 (Agent+Memory) | Building an MCP *client*, semantic memory retrieval | Completes the round-trip: you understand both sides of the protocol, not just one |
-| 5 (Proactive+Approval) | Scheduled agent triggers, approval-gated external actions | Reuses and reinforces the HITL pattern from Project 02 in a different, lower-stakes context |
-| 6 (Publish) | Packaging and documenting a piece of code for others to install and use | A public, working, documented MCP server on your GitHub is a concrete, checkable artifact — stronger than a screenshot |
+| 0 | Inspector workflow, protocol basics | "I can author + validate an MCP server" is a checkable claim |
+| 1 | Simplest server end-to-end | Confidence in mechanics before external-API complexity |
+| 2 | Wrapping a rate-limited real API as a provider | Mirrors "build an MCP server for our internal API" |
+| 3 | OAuth-backed service, resource-vs-tool design | The OAuth experience most tutorials skip |
+| 4 | Building an MCP *client* + semantic memory | You understand both sides of the protocol |
+| 5 | Scheduled triggers + structurally-gated actions | Reinforces HITL in a lower-stakes context |
+| 6 | Packaging code a stranger can install | A public working server beats a screenshot |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **Calling a Python function "the MCP server."** If there's no separate process speaking the protocol, and no way for MCP Inspector or another MCP client to connect to it independently of your agent's code, you've built a tool wrapper, not an MCP server.
-- **Skipping MCP Inspector validation.** Compliance bugs (wrong schema types, missing required fields) are invisible until a *different* client tries to use your server — Inspector exists specifically to catch this before you find out the hard way.
-- **Treating "resources" and "tools" as interchangeable.** They serve different purposes in the spec (resources = readable context/data, tools = callable actions with side effects); picking the wrong one for a given capability is a common design mistake graders will notice.
-- **Memory as a growing chat transcript.** This doesn't scale and doesn't generalize across sessions well; structured, embedded, retrievable memory entries are the actual pattern being taught.
-- **Under-gating "small" proactive actions.** "It's just a calendar invite, not a big deal" is exactly the reasoning that erodes a HITL system's guarantees over time — keep the rule absolute.
+- **Calling a Python function "the MCP server."** No separate process, no independent client connection → it's a wrapper.
+- **Skipping Inspector.** Compliance bugs are invisible until a *different* client tries your server.
+- **Tools/resources interchangeable.** Resources = readable context; tools = actions with effects.
+- **Memory as a growing transcript.** Doesn't scale or generalize.
+- **Under-gating "small" actions.** Erodes the guarantee over time.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (MCP):** Why does an MCP server being a separate process (rather than a function inside your agent) matter for reusability? What would break if you skipped that separation?
+**Q1 (MCP).** Why does the server being a separate process matter for reusability? What breaks if you skip it?
+**A1.** A separate process speaking the protocol can be used by *any* MCP client (Claude Desktop, Inspector, another agent). If it's an in-process function, only your code can call it — you've lost the entire interoperability benefit of building on a standard.
 
-**After §2 (Tool-provider vs. consumer):** Why is authoring a good MCP server a different skill from calling one well? Give an example design decision a server author has to make that a consumer never thinks about.
+**Q2 (Provider vs. consumer).** Name a design decision a server author faces that a consumer never does.
+**A2.** Whether a capability is a `tool` or a `resource`; what error shape to return on bad input; whether an operation is idempotent (e.g., should `complete_task` on an already-done task error or no-op). Consumers just call what exists.
 
-**After §2 (Long-term memory):** Why is semantic (embedding-based) recall better than keyword search for "did I ever say I don't like Friday afternoon meetings"? What would keyword search miss?
+**Q3 (Memory).** Why is semantic recall better than keyword search for "did I say I dislike Friday afternoon meetings"?
+**A3.** The stored memory might be phrased "no meetings late in the week" — no keyword overlap with "Friday afternoon," but high semantic similarity. Keyword search misses paraphrases; embedding search retrieves by meaning.
 
-**After §2 (Proactive agents):** What's the risk of a proactive agent that isn't tuned for precision, and how does the false-positive-rate metric in this project's eval strategy address it?
+**Q4 (Proactivity).** What's the risk of an untuned proactive agent, and how does the FP metric address it?
+**A4.** It nags constantly and gets ignored — indistinguishable from a dumb polling script. Tracking false-positive rate forces you to tune relevance (memory-informed filtering) until notifications are actually worth reading.
 
-**After Phase 6 (Publish):** What makes an MCP server actually reusable by a stranger — beyond "the code works on my machine"? List at least three things your README/packaging needs to cover.
+**Q5 (Publishing).** Beyond "the code works on my machine," what three things make a server reusable by a stranger?
+**A5.** (1) Independent packaging (`pyproject.toml`, `pip install`-able, no hidden deps on your agent); (2) a README with install + config + example tool calls; (3) Inspector-verified schema compliance so a different client can actually connect.

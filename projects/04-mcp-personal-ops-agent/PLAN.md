@@ -2,45 +2,43 @@
 
 ## 1. Objective & Success Criteria
 
-Build a persistent personal assistant that connects to your real tools exclusively via **MCP servers you write yourself** (calendar, GitHub, notes, job boards), maintains long-term memory of preferences and past decisions, runs scheduled proactive checks ("3 PRs need review, interview tomorrow"), and requires explicit approval before sending anything externally-visible (email, Slack message, calendar invite). The point is not "an agent with tools" — it's "an agent whose tools are standards-compliant MCP servers you authored," which is the differentiator.
+Build a persistent personal assistant that connects to real tools exclusively via **MCP servers you write yourself** (calendar, GitHub, notes), maintains long-term memory of preferences and past decisions, runs scheduled proactive checks ("3 PRs need review, interview tomorrow"), and requires explicit approval before any externally-visible action. The differentiator is not "an agent with tools" — it's "an agent whose tools are standards-compliant MCP servers you authored." (Project 09 goes deeper into pure authoring + publishing; this project pairs authoring with being your own first consumer.)
 
-| Metric | Target |
-|---|---|
-| MCP servers authored (calendar, GitHub, notes — minimum) | 3, each passing MCP Inspector's compliance checks |
-| Proactive check false-positive rate (nags you about nothing) over a 2-week trial | <10% of notifications |
-| Actions sent without approval | 0 (every externally-visible action is approval-gated, no exceptions) |
-| Memory recall accuracy (does it correctly recall a stated preference from >1 week ago) | ≥90% on a 20-question self-test |
-| Daily proactive check run cost | <$0.10/day |
+| Metric | Target | How measured |
+|---|---|---|
+| MCP servers authored, Inspector-clean | 3 (calendar, GitHub, notes) | MCP Inspector, 0 schema errors each |
+| Proactive-check false-positive rate | <10% of notifications over a 2-week trial (or a replayed 2-week fixture) | logged + retro-labeled |
+| Actions sent without approval | 0 | structural enforcement (§8), code-checked |
+| Memory recall accuracy | ≥90% on a 20-question self-test | §6 |
+| Daily proactive-check cost | <$0.10/day | token accounting |
 
 ## 2. Architecture
 
 ```mermaid
 flowchart TD
-    CRON["Scheduler (cron: hourly/daily proactive checks)"] --> AGENT[Personal Ops Agent]
-    USER["User: ad-hoc chat request"] --> AGENT
-    AGENT --> MEM[(Memory Store: preferences, past decisions, pgvector)]
-    AGENT -->|MCP protocol| CAL[Calendar MCP Server]
-    AGENT -->|MCP protocol| GH[GitHub MCP Server]
-    AGENT -->|MCP protocol| NOTES[Notes MCP Server]
-    AGENT -->|proposes action| APPROVE{Human Approval Gate}
-    APPROVE -->|approved| SEND["Execute: send email / create event / post comment"]
-    APPROVE -->|denied| DISCARD[Log denial, update memory of preference]
+    CRON["Scheduler (APScheduler / cron)"] --> AGENT[Personal Ops Agent]
+    USER["User: ad-hoc chat"] --> AGENT
+    AGENT --> MEM[(Memory: pgvector)]
+    AGENT -->|MCP Streamable HTTP / stdio| CAL[Calendar MCP Server]
+    AGENT -->|MCP| GH[GitHub MCP Server]
+    AGENT -->|MCP| NOTES[Notes MCP Server]
+    AGENT -->|proposes action| APPROVE{Approval Gate}
+    APPROVE -->|approved| SEND["Execute: email / event / comment"]
+    APPROVE -->|denied| DISCARD[Log denial + update memory]
     SEND --> MEM
 ```
 
-### Components
+### Components + tool interface contracts
 
-| Component | Role | Protocol/Tooling | Reads | Writes |
-|---|---|---|---|---|
-| Calendar MCP Server | Exposes `list_events`, `create_event`, `find_free_slots` as MCP tools | MCP server (Python SDK), wraps a real calendar API (Google Calendar API or a local `.ics`-backed stub for a no-OAuth demo) | calendar backend | calendar backend |
-| GitHub MCP Server | Exposes `list_open_prs_for_review`, `list_my_issues`, `comment_on_pr` as MCP tools | MCP server, wraps GitHub REST API | GitHub API | GitHub API |
-| Notes MCP Server | Exposes `search_notes`, `add_note`, `get_note` over a local note store | MCP server, wraps a local Markdown-file or SQLite-backed store | local notes | local notes |
-| Personal Ops Agent | The single LLM-driven agent that discovers and calls the above MCP servers as tools, reasons over the daily digest, and proposes actions | Claude/OpenAI SDK w/ MCP client, LangGraph for the proactive-check loop | `memory`, MCP tool results | proposed actions, `memory` updates |
-| Memory Store | Long-term preferences ("I don't want reminders after 6pm") and a log of past approved/denied actions | pgvector or SQLite+embeddings | agent queries at start of every run | agent writes after every user interaction or approval decision |
-| Approval Gate | Same HITL principle as Project 02, applied to personal-scale actions | Slack DM or terminal prompt (simpler than Project 02's Slack Block Kit, since this is single-user) | proposed action | `human_decision` |
-| Scheduler | Triggers the proactive-check flow on a cadence | plain cron / APScheduler | — | invokes Agent |
+| Server | Tools (typed) | Resources | Backing |
+|---|---|---|---|
+| Calendar | `list_events(day: str) -> list[Event]`, `create_event(title,start,end) -> Event`, `find_free_slots(day, duration_min) -> list[Slot]` | `today` (read-only) | Google Calendar API **or** local `.ics` stub |
+| GitHub | `list_open_prs_for_review() -> list[PR]`, `list_my_issues() -> list[Issue]`, `comment_on_pr(repo,num,body) -> Comment` | `review_queue` | GitHub REST |
+| Notes | `search_notes(query, k=5) -> list[Note]`, `add_note(text) -> Note`, `get_note(id) -> Note` | `note_index` | SQLite + embeddings |
 
-### State schema (pseudocode)
+`find_free_slots` is a real algorithm, not a stub: fetch the day's events, sort by start, compute gaps between consecutive events within working hours (configurable, default 09:00–18:00), and return gaps ≥ `duration_min`. Handle the boundary gaps (before first event, after last).
+
+### Long-term memory design (the gap Sonnet left shallow)
 
 ```python
 class MemoryEntry(TypedDict):
@@ -49,80 +47,90 @@ class MemoryEntry(TypedDict):
     content: str
     embedding: list[float]
     created_at: str
+    superseded_by: str | None    # id of a later entry that overrides this
+    salience: float              # decays over time unless reinforced
+```
+Policies:
+- **Write:** after each user interaction, a small extraction call proposes 0–N candidate memories ("The user said they don't want reminders after 6pm" → a `preference`). Only write if it's not a near-duplicate of an existing entry (cosine > 0.9 against retrieved neighbors).
+- **Consolidate/supersede:** on write, if the new entry contradicts an existing one (e.g., "I do want evening reminders now"), set the old entry's `superseded_by` rather than deleting — auditable history. Retrieval ignores superseded entries.
+- **Retrieve:** at the start of every run, semantic-search the top-k relevant, non-superseded entries by the current context.
+- **Forget/decay:** `salience` decays with age; reinforced when re-referenced. Low-salience, old, non-preference facts can be pruned.
 
-class ProposedAction(TypedDict):
-    action_type: Literal["send_email","create_event","post_pr_comment","other"]
-    payload: dict
-    rationale: str
-    requires_approval: bool   # always True for anything externally-visible — not actually optional
+### Approval gate — structural enforcement (Sonnet stated the goal, not the mechanism)
 
-class ProactiveCheckState(TypedDict):
-    digest_items: list[str]        # e.g. "3 PRs need review", "interview tomorrow 2pm"
-    relevant_memories: list[MemoryEntry]
-    proposed_actions: list[ProposedAction]
-    human_decisions: list[Literal["approved","denied"]]
+```python
+class ApprovedAction:            # only constructible via the gate
+    def __init__(self, action, decision_token): ...
+
+def execute(action: ApprovedAction): ...   # signature requires an ApprovedAction
+
+# The agent proposes a ProposedAction; execute() cannot be called with one.
+# The only path to an ApprovedAction is gate.approve(proposal, human_decision),
+# which returns one iff human_decision == "approved". Unapproved actions are
+# unrepresentable at the type level, not merely discouraged.
 ```
 
-**Communication pattern:** the agent is an MCP **client**; each capability (calendar/GitHub/notes) is a separate MCP **server** process, discovered and called over the Model Context Protocol (JSON-RPC over stdio or HTTP+SSE depending on transport). This is architecturally different from Projects 01–03: instead of LangGraph nodes sharing one state object, each tool provider is an independently runnable, independently testable process that speaks a standard protocol — the agent could be swapped for a totally different client (e.g., Claude Desktop) and the same MCP servers would still work unmodified.
+**Communication pattern.** The agent is an MCP **client**; each capability is a separate MCP **server** process, discovered and called over MCP (JSON-RPC; **stdio** locally, **Streamable HTTP** remotely — *not* the deprecated HTTP+SSE). Any MCP client (e.g., Claude Desktop) could use the same servers unmodified — that's the point.
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| Official MCP Python SDK for servers | Standards-compliant by construction; MCP Inspector can validate it | Hand-rolled JSON-RPC — reinvents a spec that already exists and risks non-compliance |
-| stdio transport for local servers, HTTP+SSE if you containerize | stdio is simplest for locally-run personal tools; HTTP+SSE if you want the servers reachable from a deployed agent | Only ever using stdio — fine for this project, but document the HTTP option since Project 09 (MCP Server Trilogy) requires it |
-| pgvector (or SQLite + a small embedding lib) for memory | Needs semantic recall ("did I say anything about not wanting Friday meetings"), not just exact match | Plain keyword search — will miss paraphrased preferences |
-| APScheduler or plain cron for proactive checks | Simple, no extra infra | A message queue / event bus — over-engineered for a single-user personal agent |
-| Google Calendar API OR a local `.ics` stub | Real Calendar API needs OAuth setup, which is extra friction for a demo; document both paths, recommend starting with the local stub and upgrading to real OAuth once the MCP server logic works | Only supporting the real API — blocks a fast Phase 1 |
+| Official MCP Python SDK (FastMCP) | Standards-compliant by construction; Inspector-validatable | Hand-rolled JSON-RPC — risks non-compliance |
+| stdio local / Streamable HTTP remote | stdio simplest for local tools; Streamable HTTP is the current remote transport | HTTP+SSE — **deprecated** in the 2025 spec revision |
+| pgvector for memory | Semantic recall of paraphrased preferences | Keyword search — misses paraphrases |
+| APScheduler / cron | Simple, no extra infra | Message queue — over-engineered for single-user |
+| Calendar `.ics` stub → real OAuth later | Get MCP mechanics right before OAuth friction | Real API first — blocks a fast Phase 1 |
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
+| Phase | Goal | Definition of Done | Est. |
 |---|---|---|---|
-| 0 — Setup | MCP Python SDK installed, MCP Inspector working, decide calendar backend (stub vs. real OAuth) | Inspector can connect to a "hello world" MCP server you wrote | 2 days |
-| 1 — Notes MCP Server | Simplest server first — local file/SQLite notes with `search_notes`/`add_note` | Inspector shows all tools/resources correctly typed; a manual call round-trips | 2–3 days |
-| 2 — GitHub MCP Server | Wraps GitHub REST API for PR/issue queries and comment posting | Same Inspector validation; a real query against your own GitHub account returns real PRs | 3–4 days |
-| 3 — Calendar MCP Server | Wraps calendar backend for event listing/creation/free-slot finding | Same validation; can list today's events and propose a free slot | 3–4 days |
-| 4 — Agent + Memory | Personal Ops Agent as an MCP client calling all 3 servers, with pgvector memory | Ad-hoc chat query ("what do I have going on today") correctly pulls from all 3 servers | 4–5 days |
-| 5 — Proactive checks + Approval | Scheduler triggers a daily digest; agent proposes actions; approval gate blocks execution until you respond | Running for a real week produces a daily digest with ≤10% false-positive nags, and zero unapproved sends | 4–5 days |
-| 6 — Publish + Polish | Package one MCP server for public reuse (e.g., the Notes server), README, demo | One MCP server has its own standalone README and is installable independently of the rest of the project | 2–3 days |
+| 0 — Setup | SDK + Inspector; pick calendar backend | Inspector connects to a hello-world server | 2 d |
+| 1 — Notes server | Simplest server first | Inspector clean; a manual call round-trips | 2–3 d |
+| 2 — GitHub server | Wraps GitHub REST | Real query returns your real PRs; Inspector clean | 3–4 d |
+| 3 — Calendar server | Event listing/creation/`find_free_slots` | Lists today; proposes a free slot; Inspector clean | 3–4 d |
+| 4 — Agent + Memory | MCP client calling all 3 + pgvector memory w/ policies | "What's going on today" pulls from all 3; memory write/supersede works | 4–5 d |
+| 5 — Proactive + Approval | Scheduler daily digest; structural approval gate | 2-week (or replayed) trial: ≤10% FP nags, 0 unapproved sends | 4–5 d |
+| 6 — Publish + Polish | Package one server standalone; README | Notes server installs independently | 2–3 d |
 
 **Total: ~3–4 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- GitHub personal access token (read PRs/issues, write comments) — scope it minimally (repo read + PR comment, not admin).
-- Google Calendar API credentials (OAuth) if using the real backend; otherwise a local `.ics` file is sufficient for the demo and avoids OAuth setup entirely.
-- No special dataset — your own notes/calendar/GitHub activity *is* the data, which also makes this the most personally useful project in the portfolio.
-- LLM cost: proactive daily check ≈ a few thousand tokens/day, well under $0.10/day; ad-hoc chat usage variable but low.
+- GitHub fine-grained PAT (repo read + PR comment only — minimal scope).
+- Google Calendar OAuth **or** a local `.ics` (recommended start).
+- Your own notes/calendar/GitHub activity is the data.
+- Cost: proactive check ≈ a few k tokens/day, well under $0.10.
 
 ## 6. Eval Strategy
 
-- **MCP compliance:** run MCP Inspector against each of the 3 servers; all tool/resource schemas must validate with no errors.
-- **Memory recall self-test:** write 20 preference statements into memory over a week of real use, then 1+ week later ask the agent 20 recall questions; score exact/paraphrase-correct recall ≥90%.
-- **Proactive-check precision:** log every notification for 2 weeks of real use; retrospectively mark each as useful/noise; false-positive rate <10%.
-- **Approval-gate integrity:** code-review (not LLM-judged) check that every `action_type` in `ProposedAction` routes through the Approval Gate before execution — this should be enforced structurally (the execution function should be unreachable without a decision object), not just tested by observation.
+- **MCP compliance:** Inspector on all 3 servers, 0 errors.
+- **Memory recall:** write 20 preference statements over a week (or seed a fixture), then ≥1 week later ask 20 recall questions; score ≥90% (exact or paraphrase-correct).
+- **Proactive precision:** log every notification for 2 weeks (or replay a fixture of PR/calendar states), retro-label useful/noise, FP <10%.
+- **Approval integrity:** code-check that `execute()` is unreachable without an `ApprovedAction` — structural, not observational.
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **Building "just a wrapper," not an MCP server.** If your "MCP server" is actually just a Python function called directly by your agent code, you haven't built what this project is about — it must be a separate process speaking the MCP protocol, connectable from any MCP client (test this by connecting MCP Inspector to it, not just your own agent).
-- **OAuth setup swallowing the whole timebox.** Real Calendar/GitHub OAuth flows are fiddly; start with a stub/local backend and get the MCP mechanics right first, then swap in the real API — don't let Phase 0 become Phase 0-through-2.
-- **No approval gate on "the small stuff."** It's tempting to auto-send innocuous-looking things ("just a calendar invite") — but the whole pitch of this portfolio is that consequential actions are gated; keep the rule absolute (all externally-visible actions gated), and let false-positive rate (§6) be the metric you tune instead of loosening the gate.
-- **Memory that's just a chat log, not structured preferences.** Dumping the whole conversation history into the prompt every time isn't "long-term memory" and won't scale or generalize; extract and store discrete preference/fact entries with embeddings, as in the schema above.
-- **Proactive checks that nag constantly and get ignored.** If false-positive rate isn't tracked and tuned, you'll produce a notification firehose indistinguishable from a naive polling script — defeats the "agentic" pitch entirely.
+- **"Just a wrapper," not an MCP server** — must be a separate process any MCP client can connect to; test with Inspector, not only your own agent.
+- **OAuth eating the timebox** — stub first, real API after mechanics work.
+- **Under-gating "small" actions** — keep the rule absolute; tune the FP rate, don't loosen the gate.
+- **Memory as a chat log** — extract discrete entries with embeddings + supersede policy, don't dump transcripts.
+- **Notification firehose** — track and tune FP or it's indistinguishable from a polling script.
 
 ## 8. Implementation Notes for the Executing Model
 
-- Build and validate each MCP server **completely independently** of the agent, using MCP Inspector, before writing any agent code that calls it — this catches protocol-compliance bugs early and keeps the servers genuinely reusable.
-- Use MCP's `resources` (not just `tools`) for read-only data like "today's calendar" if it fits the resource model better than a tool call — this is a distinction the MCP spec makes deliberately; don't force everything into `tools`.
-- Version each MCP server's `requirements.txt`/`pyproject.toml` independently — since the pitch is "one of these is a standalone, publishable package," it shouldn't secretly depend on the personal-ops-agent's own dependencies.
-- For the proactive-check scheduler, make the check idempotent per day (don't re-notify about the same PR twice in one day if the cron fires more than once) — reuse the idempotency-key idea from Project 02 if you've built that first.
-- Keep the approval channel dead simple (a terminal prompt or a single Slack DM) — this is a single-user project; don't rebuild Project 02's multi-reviewer Slack Block Kit flow here, that's solving a problem you don't have.
+- Build + Inspector-validate each server **independently** before any agent code — catches compliance bugs early, keeps servers reusable.
+- Use MCP **resources** for read-only data ("today's calendar") and **tools** for actions — don't force everything into tools.
+- Version each server's `pyproject.toml` independently — the publishable one must not depend on the agent's deps.
+- Idempotent proactive checks per day — don't re-notify about the same PR twice if cron double-fires (reuse Project 02's idempotency-key idea).
+- Keep the approval channel dead simple (terminal prompt or one Slack DM) — single-user; don't rebuild Project 02's multi-reviewer flow.
+- **Structural gate:** implement the `ApprovedAction` type described in §2 — the eval literally checks the execute path is unreachable otherwise.
 
 ## 9. Definition of Done
 
-- [ ] 3 MCP servers built, each independently passing MCP Inspector validation.
-- [ ] Agent successfully calls all 3 as an MCP client for both ad-hoc chat and scheduled proactive checks.
-- [ ] 2-week real-use trial logged with false-positive rate reported.
-- [ ] Memory recall self-test run with accuracy reported.
-- [ ] At least one MCP server packaged with its own README as a standalone, publishable artifact.
+- [ ] 3 MCP servers, each Inspector-clean, using Streamable HTTP or stdio.
+- [ ] Agent calls all 3 as a client for chat + scheduled checks.
+- [ ] 2-week (or replayed) trial logged with FP rate.
+- [ ] Memory recall self-test reported; supersede policy demonstrated.
+- [ ] One server packaged standalone with its own README.

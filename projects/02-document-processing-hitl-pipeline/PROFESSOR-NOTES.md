@@ -2,67 +2,73 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| LangGraph `StateGraph` basics | This project is one graph with a suspend/resume point | LangGraph Quickstart (verify against your installed version — see RESOURCES.md) |
-| Structured extraction with Pydantic | Extraction agent's whole job is typed field extraction | LangChain's structured-output / extraction how-to guides |
-| Basic Postgres (tables, transactions, unique constraints) | Your audit log and idempotency guard live here | Any "Postgres for application developers" primer — you need transactions and unique constraints, not much else |
-| Webhooks (what they are, how to verify a signature) | The Slack approval callback is a webhook you must secure | Slack's own "Verifying requests from Slack" doc |
+| LangGraph `StateGraph` + checkpointers | This is one graph with a suspend/resume point | LangGraph docs → "Persistence" and "Human-in-the-loop" concept pages |
+| Pydantic structured extraction | Extraction's whole job is typed field extraction | LangChain "How to do extraction" how-to |
+| Postgres transactions + unique constraints | Your audit log and idempotency guard live here | PostgreSQL docs → "Constraints" (UNIQUE) and "Transactions"; you need only these |
+| Webhook signature verification | The Slack callback is a security surface | Slack "Verifying requests from Slack" |
 
 ## 2. Core Concepts Taught
 
-### Durable execution / interrupts (LangGraph `interrupt()`)
-**What:** a mechanism to pause a running graph at a specific node, persist its exact state, and resume it later — potentially from a different process, hours or days after the pause.
-**Why it exists:** a human approval step can take minutes to days. You cannot hold a thread/process open that whole time, and a naive "poll a status column in a loop" approach is racy and wastes resources. Durable execution treats "waiting for a human" as a first-class state, not a workaround.
-**How it works:** the interrupt node raises a special signal that LangGraph's checkpointer catches; it serializes the current state to storage and returns control to the caller. A later, separate call (`graph.invoke(Command(resume=human_decision), config={"thread_id": ...})`) rehydrates that exact state and continues.
-**Where it's used here:** the Human Approval node — the single most important piece of this project's design, and the reason Postgres-backed (not in-memory) checkpointing is mandatory, not a nice-to-have.
+### Durable execution / interrupts (`interrupt()`)
+**What.** Pause a running graph at a node, persist its exact state, resume later — possibly from a different process, hours/days on.
+**Why it exists.** Human approval can take minutes to days. You cannot hold a thread open that long, and "poll a status column in a loop" is racy and wasteful. Durable execution makes "waiting for a human" a first-class persisted state.
+**How it works (mechanism).** The interrupt node raises a signal the checkpointer catches; it serializes state to storage (Postgres) keyed by `thread_id` and returns control to the caller. A later `graph.invoke(Command(resume=decision), config={"configurable": {"thread_id": document_id}})` rehydrates that state and continues. Because state lives in Postgres, a full process restart in between is fine.
+**Where here.** The Human Approval node — the reason Postgres-backed (not in-memory) checkpointing is mandatory.
 
 ### Human-in-the-loop (HITL) design
-**What:** a system design pattern where an automated pipeline defers consequential decisions to a human reviewer instead of acting autonomously, based on confidence and risk thresholds.
-**Why it exists:** fully autonomous action on irreversible or high-stakes outcomes (money movement, legal commitments) is where AI agents cause the most real-world damage; HITL is the industry-standard mitigation, and building one correctly (not just "email someone") is a hireable, specific skill.
-**How it works:** a validation step scores confidence/risk and routes to either auto-execute or a suspend-and-notify path; the human's decision is captured as data (who, when, what) and feeds back into the same state the automated path would have produced.
-**Where it's used here:** the `requires_human` branch and the whole HITL node — note it is deliberately combined with confidence *and* business-impact rules (§7 risk), not confidence alone.
+**What.** Defer consequential decisions to a human based on **confidence and risk**, not confidence alone.
+**Why it exists.** Autonomous action on irreversible/high-stakes outcomes is where agents cause real damage; HITL is the industry mitigation, and building one correctly (not "email someone") is a specific hireable skill.
+**How it works.** Validation scores confidence and risk → routes to auto-execute or suspend-and-notify → the human decision is captured as data (who/when/what) feeding the same state the auto path would produce.
+**Where here.** The `requires_human` branch, combining confidence and business-impact rules.
 
-### Idempotency
-**What:** designing an operation so that performing it multiple times has the same effect as performing it once.
-**Why it exists:** distributed systems retry on failure by default (network blips, process crashes); without idempotency, retries after a partial failure cause duplicate side effects — double payments, duplicate tickets.
-**How it works:** derive a stable key from the operation's inputs (content hash + action type here), check for that key's existence before executing, and make the check-and-execute atomic (a unique constraint in Postgres, not an application-level "check then act" race).
-**Where it's used here:** the Action Executor and the idempotency replay test in §6/§9 of PLAN.md.
+### Idempotency (and why exactly-once is a myth)
+**What.** Designing an operation so doing it N times equals doing it once.
+**Why it exists.** Distributed systems retry on failure by default (network blips, crashes). **Exactly-once delivery is impossible** across a network — you cannot atomically "do the side effect" and "record that you did it" in the outside world. The achievable pattern is **at-least-once delivery + idempotent handlers**: retries may re-deliver, but the idempotency key makes re-execution a no-op.
+**How it works.** Derive a stable key from inputs (`sha256(document_id + action_type)`), and make check-and-execute atomic via a Postgres UNIQUE constraint (INSERT … ON CONFLICT), **not** an application-level read-then-write (which races). The transactional-outbox pattern generalizes this when the side effect is "send a message".
+**Where here.** The Action Executor + the replay/concurrency tests.
 
-### Audit logging as a design constraint, not an afterthought
-**What:** an append-only record of every meaningful state transition, sufficient to reconstruct "what happened and why" after the fact.
-**Why it exists:** enterprises adopting agentic automation for consequential actions need to answer "why did the system do X" for compliance and debugging — this is a hard requirement in regulated domains (finance, healthcare, insurance), which is exactly the domain this project simulates.
-**Where it's used here:** the Audit Logger writing to a separate `audit_log` table on every transition, independent of the graph's own state (so it survives even if you later change the state schema).
+### Audit logging as a design constraint
+**What.** An append-only record of every meaningful transition, enough to reconstruct "what happened and why".
+**Why it exists.** Regulated domains (finance, healthcare, insurance — exactly what this simulates) must answer "why did the system do X". This is a hard requirement, not a nice-to-have.
+**Where here.** The Audit Logger writing to a separate `audit_log` table on every transition, independent of graph state (survives schema changes). Note it logs *findings/metadata*, never more raw PII than necessary.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | Schema design for auditability | Enterprise agent work is 30% "can this survive an audit," not just "does it work" |
-| 1 (Classify+Extract) | Multi-class structured extraction with discriminated unions | Directly transferable to any document-AI job posting |
-| 2 (Validation) | Separating deterministic business logic from probabilistic LLM output | The single most common mistake junior agent engineers make is not knowing when *not* to use an LLM |
-| 3 (HITL Interrupt) | Durable execution / suspend-resume design | This is the pattern behind every production "approve this agent action" feature at real companies |
-| 4 (Action+Idempotency) | Idempotency keys, safe retries | A universal distributed-systems skill, not agent-specific — shows up in every backend interview too |
-| 5 (Eval) | Measuring recall vs. precision tradeoffs for a safety-critical routing decision | Teaches you to report two numbers instead of one misleading average — a maturity signal to reviewers |
-| 6 (Deploy+Escalation) | Designing timeouts for human-dependent steps | Real HITL systems die when nobody thinks about "what if the human never responds" |
-| 7 (Polish) | Communicating a safety-oriented system's design tradeoffs | This project's story ("I built the approval-gate pattern enterprises actually ship") is a strong differentiator in interviews |
+| 0 | Schema design for auditability | Enterprise agent work is 30% "can this survive an audit" |
+| 1 | Multi-class extraction + real confidence (self-consistency) | Directly transferable to document-AI roles; most candidates fake confidence |
+| 2 | Deterministic logic vs. probabilistic LLM output | The #1 junior mistake is not knowing when *not* to use an LLM |
+| 3 | Durable suspend/resume | The pattern behind every production "approve this agent action" |
+| 4 | Idempotency keys, safe retries, at-least-once semantics | Universal distributed-systems skill, shows up in backend interviews too |
+| 5 | Recall vs. precision tradeoffs for a safety-critical route | Report two numbers, not one average — a maturity signal |
+| 6 | Timeouts for human-dependent steps | Real HITL dies on "what if the human never responds" |
+| 7 | Communicating a safety-oriented design | "I built the approval-gate pattern enterprises ship" differentiates you |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **"HITL just means add a Slack message."** The hard part is the suspend/resume semantics and the idempotency guarantee around the eventual action — the notification is the easy 10%.
-- **Using an LLM to "validate" instead of fixed rules.** If a human asks "why was this flagged," "the model thought so" is not an acceptable answer in a regulated workflow. Deterministic rules are a feature, not a limitation.
-- **Treating confidence score as risk score.** They are different axes; conflating them creates a system that rubber-stamps high-confidence-but-high-stakes actions.
-- **Skipping the "process restarted mid-approval" test.** This is the scenario that separates a real durable-execution implementation from a demo that only works if the server never restarts.
-- **One global timeout for all escalations.** Different document types have different urgency; hardcoding one timeout either annoys reviewers (too short) or lets stale approvals rot (too long).
+- **"HITL = add a Slack message."** The hard 90% is suspend/resume + the idempotency guarantee around the action; the notification is the easy 10%.
+- **LLM validation instead of rules.** "The model thought so" is not an auditable answer.
+- **Confidence as risk.** Different axes; conflating them rubber-stamps high-confidence high-stakes actions.
+- **Skipping the restart-mid-approval test.** Separates real durable execution from a demo that breaks on restart.
+- **One global timeout.** Different doc types have different urgency.
+- **Read-then-write idempotency.** Not atomic under concurrency — two requests both pass the check.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (Durable execution):** What specifically would break in this project if you used an in-memory checkpointer instead of a Postgres-backed one? Walk through the process-restart scenario.
+**Q1 (Durable execution).** What breaks with an in-memory checkpointer? Walk the restart scenario.
+**A1.** In-memory state lives in the process. Suspend at approval → process restarts (deploy, crash) → state is gone → the resume webhook has no thread to resume → the document is lost or must restart from scratch, re-doing side effects. Postgres-backed state survives the restart.
 
-**After §2 (HITL design):** Give an example of a document that would have low extraction confidence but low risk, and one with high confidence but high risk. Why does your validation logic need to treat these differently?
+**Q2 (HITL).** Give a low-confidence-low-risk doc and a high-confidence-high-risk doc. Why treat them differently?
+**A2.** A $12 invoice extracted at 60% (low conf, low risk) can auto-process — a wrong $12 is cheap. A $2M invoice at 95% (high conf, high risk) should still be reviewed — the cost of a rare error is huge. Routing on confidence alone rubber-stamps the second.
 
-**After §2 (Idempotency):** Why is "check if the key exists, then insert" not truly idempotent under concurrent requests, and what Postgres feature fixes this?
+**Q3 (Idempotency).** Why isn't "check if key exists, then insert" idempotent under concurrency, and what fixes it?
+**A3.** Two requests can both read "absent" before either inserts, then both execute. A Postgres UNIQUE constraint with INSERT … ON CONFLICT makes the check-and-claim a single atomic operation; the loser gets a conflict and skips the side effect.
 
-**After Phase 2 (Validation):** Why does the plan insist the rules engine is plain code, not an LLM call? Can you think of a business rule where an LLM actually would be more appropriate — and how would you keep that decision auditable anyway?
+**Q4 (Validation).** Why rules, not an LLM? When would an LLM be appropriate, and how keep it auditable?
+**A4.** Rules are exact and explainable (an auditor sees "amount_over_10k fired"). An LLM helps for genuinely fuzzy judgments (e.g., "does this contract clause look non-standard") — keep it auditable by having it output a *structured reason + the clause span*, logged, and still gate the final action on a deterministic rule.
 
-**After Phase 6 (Escalation):** Design the escalation policy for two document types with very different urgency. What data would you need to set a sensible timeout for each?
+**Q5 (Escalation).** Design escalation for two doc types with different urgency. What data sets the timeout?
+**A5.** Config per doc_type: invoice 48h → escalate to a second reviewer; time-sensitive claim 4h. Data needed: doc_type, submission timestamp, business SLA per type, and reviewer availability/on-call schedule.
