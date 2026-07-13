@@ -1,41 +1,39 @@
 # RESOURCES.md — Agent Release Gate: CI/CD for Agents
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING.
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed.
 
 ## 1. What to clone / download
 
 ### Official GitHub Actions toolkit repos
-
 ```bash
-git clone --depth 1 https://github.com/actions/toolkit.git /tmp/ref-actions-toolkit
-git clone --depth 1 https://github.com/actions/cache.git /tmp/ref-actions-cache
-git clone --depth 1 https://github.com/actions/github-script.git /tmp/ref-actions-github-script
+git clone --depth 1 https://github.com/actions/toolkit.git        /tmp/ref-actions-toolkit         # ✅
+git clone --depth 1 https://github.com/actions/cache.git          /tmp/ref-actions-cache           # ✅
+git clone --depth 1 https://github.com/actions/github-script.git  /tmp/ref-actions-github-script   # ✅
 ```
-Status: ✅ CONFIRMED WORKING (all three returned HTTP 200). `toolkit` is the SDK for building a custom JavaScript/TypeScript Action if you go that route (a Docker-based or composite Action in Python is also a valid, arguably simpler choice given this portfolio's Python-heavy stack — pick based on your comfort level, not because one is "more correct"). `cache` is the official caching action for persisting the baseline scorecard between runs (PLAN.md §3). `github-script` is a convenient way to post the PR scorecard comment (PLAN.md §4) without hand-rolling GitHub API auth boilerplate.
+- `toolkit` — SDK for a JS/TS action (a Docker/composite Python action is arguably simpler given this portfolio's Python stack; pick by comfort).
+- `cache` — persist the baseline scorecard between runs (PLAN §3), keyed by `(repo, scenario_set_hash)`.
+- `github-script` — post the scorecard PR comment (PLAN §4) without hand-rolling GitHub API auth.
 
 ### Your own Project 03 (primary internal dependency)
-
 ```bash
-# No external clone needed — this is the eval harness you're packaging.
-# Refactor its simulator + judge + aggregator into an importable package
-# (e.g. a small `agent_eval_gate` Python package) rather than copy-pasting
-# code between Project 03 and Project 12.
+# No external clone — this is the harness you're packaging.
+# Refactor its simulator + judge + aggregator into an importable `agent_eval_gate`
+# package rather than copy-pasting between Project 03 and Project 12.
 ```
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| `actions/toolkit` | Read-only reference (or reuse as-is if building a JS/TS Action) | Phase 1 |
-| `actions/cache` | Reuse as-is — baseline scorecard persistence | Phase 3 |
-| `actions/github-script` | Reuse as-is — PR comment posting | Phase 4 |
-| Project 03's harness | Adapt — refactor into an importable package; this *is* the core of this project's Phase 0/2 | Phase 0, 2 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| `actions/toolkit` | repo root | Read-only (or reuse for a JS action) | 1 |
+| `actions/cache` | repo root | Reuse — baseline persistence | 3 |
+| `actions/github-script` | repo root | Reuse — PR comment posting | 4 |
+| Project 03 harness | (internal) | Adapt — refactor into an importable package | 0, 2 |
 
-## 3. GitHub's own documentation (not repos, but load-bearing)
-
-- GitHub Actions "Creating a composite action" and "Creating a Docker container action" guides — pick whichever action type matches your harness's packaging (a Docker action is a natural fit if your harness has Python dependencies, since it avoids re-installing them on every runner).
-- GitHub's Checks API / Commit Status API docs — needed to make the Action actually block a PR's merge (not just post an informational comment) when a regression is detected.
+## 3. GitHub docs (load-bearing, non-code)
+- "Creating a Docker container action" (natural fit for the Python harness — avoids re-installing deps per run) vs. "Creating a composite action".
+- Checks API / Commit Status API — to actually block a PR's merge, not just comment.
+- **"Security hardening for GitHub Actions" → events + secrets** — read the `pull_request` vs `pull_request_target` and fork-secret-exposure section before Phase 1; it's the real footgun for a CI eval that needs an LLM API key (see PLAN §8).
 
 ## 4. Target repos for the reusability proof
-
-Reuse this same portfolio's Project 01 and Project 02 as the two target repos required by PLAN.md's success criteria — no external repos needed. This also means their `gate-config.yml` files are the concrete, checkable artifacts that prove the cross-repo reusability claim.
+Reuse this portfolio's Project 01 and 02 as the two targets — their `gate-config.yml` files are the concrete artifacts proving the cross-repo reusability claim. Both already expose the Target Agent Contract endpoint the harness calls.

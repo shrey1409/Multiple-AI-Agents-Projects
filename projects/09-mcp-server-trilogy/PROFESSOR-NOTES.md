@@ -2,62 +2,69 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| MCP fundamentals (tools/resources/prompts, transports) | This entire project is authoring MCP servers | If you built Project 04 first, you already have this — otherwise read the official MCP spec before starting |
-| Basic package publishing (what a `pyproject.toml` is, what `pip install` from PyPI requires) | Phase 5/6 require actually publishing a package | PyPI's own "Packaging Python Projects" tutorial |
-| Writing tests that spin up a real subprocess (not just unit-testing internal functions) | Your test suite must exercise the real protocol transport | Python's `subprocess` module docs, or your test framework's fixture patterns for external processes |
+| MCP fundamentals (tools/resources/prompts, transports) | The whole project is authoring servers | Project 04 first, or the official MCP spec (modelcontextprotocol.io) |
+| Package publishing (`pyproject.toml`, PyPI) | Phase 5/6 actually publish | PyPI "Packaging Python Projects" tutorial |
+| Testing a subprocess over a real transport | Your tests must exercise the protocol, not internals | Python `subprocess` docs; pytest fixtures for external processes |
+| JSON Schema (generated from type hints) | Inspector validates your tools' schemas | Note that FastMCP derives the schema from your Python type annotations |
 
 ## 2. Core Concepts Taught
 
 ### Tool-provider authorship as a distinct skill
-**What:** designing and building the *server* side of a tool-access protocol — deciding what capabilities to expose, how to type their inputs/outputs, and how to handle failure — as opposed to consuming someone else's already-built server.
-**Why it exists:** most "I built an AI agent" projects only exercise the consumer side (call this existing tool); authoring a well-designed server requires API-design judgment (what's a tool vs. a resource, what should be idempotent, what error shape is useful to a caller) that consuming tools never forces you to practice.
-**Where it's used here:** every one of the 3 servers — this project exists specifically to isolate and practice this skill.
+**What.** Designing/building the *server* side — what to expose, how to type it, how to fail — vs. consuming someone's server.
+**Why it exists.** Most "I built an agent" projects only exercise the consumer side. Authoring forces API-design judgment (tool vs. resource, what's idempotent, what error shape helps a caller) that consuming never does.
+**Where here.** All 3 servers.
 
 ### Protocol compliance vs. "it works for me"
-**What:** the difference between a server that happens to work when called by the one client you wrote, and a server that's verifiably correct against the protocol's actual specification — checkable by an independent tool (MCP Inspector) or a different client entirely.
-**Why it exists:** a server tightly coupled to assumptions baked into your own test client is not actually reusable — the entire value of building on a standard protocol is that *anyone's* compliant client can use your server, and that claim is only as strong as your verification of it.
-**Where it's used here:** the Phase 4 cross-client verification step — the single most important validation in the whole project, more convincing than any amount of testing against your own client.
+**What.** The gap between "works when *my* client calls it" and "verifiably correct against the spec, usable by *any* client."
+**Why it exists.** A server coupled to your own client's assumptions isn't reusable — the whole value of a standard protocol is that anyone's compliant client works, and that claim is only as strong as your verification.
+**How it works (mechanism).** The MCP handshake negotiates capabilities and protocol version; the client then introspects your tools via their generated JSON Schemas. A different client will send exactly-spec-shaped requests — if your server assumed something extra your own client always sent, it breaks. Inspector and a second client surface that.
+**Where here.** The Phase-4 cross-client verification — the decisive validation.
 
-### Idempotency and error semantics as API design, not an afterthought
-**What:** deciding, deliberately, what should happen when a tool is called twice with the same effective input, or with invalid input — and making that behavior predictable and typed rather than accidental.
-**Why it exists:** a tool provider that crashes on bad input, or produces different results on retries of "the same" action, is unpleasant and unsafe to build agents against — this is API design 101, applied to the MCP context.
-**Where it's used here:** `complete_task`'s idempotent-completion behavior, and the required invalid-input test case for every tool in §6 of PLAN.md.
+### Idempotency and error semantics as API design
+**What.** Deciding, deliberately, what happens on a repeated call or a bad input — and making it predictable and typed.
+**Why it exists.** A provider that crashes on bad input or gives different results on retries is unsafe to build agents against. This is API design 101 in the MCP context.
+**Where here.** `complete_task`'s idempotent completion; the distinct not_found vs. already-done cases; the required invalid-input test per tool.
 
 ### Publishing as a completion criterion
-**What:** treating "can a stranger install and use this without talking to me" as part of the definition of done, not a stretch goal.
-**Why it exists:** a working demo on your own machine and a genuinely installable, documented package are different levels of engineering rigor, and only the second is a credible, checkable portfolio claim.
-**Where it's used here:** the PyPI packaging and community-directory-submission requirements in Phase 5/6.
+**What.** "A stranger can install and use this without talking to me" is part of done, not a stretch.
+**Why it exists.** A working local demo and an installable, documented, registry-listed package are different engineering-rigor levels; only the second is a credible, checkable claim.
+**Where here.** PyPI + the official MCP Registry `server.json` submission.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | MCP Inspector as a validation tool, not just a demo toy | The habit of validating against a spec, not just against your own expectations |
-| 1 (API Wrapper) | Wrapping a flaky external dependency safely (caching, error typing) | Directly transferable to any "wrap API X as a tool" task in a real job |
-| 2 (Knowledge Store) | Designing a search tool's interface (what's a tool vs. a resource) | API-design judgment that generalizes beyond MCP specifically |
-| 3 (Task Tracker) | Idempotency and CRUD semantics under a tool-call interface | A universal backend-engineering skill, reinforced in an agent context |
-| 4 (Cross-client verification) | Proving an interoperability claim instead of asserting it | The single habit that most separates "sounds impressive" projects from verifiably true ones |
-| 5 (Tests+Packaging) | Testing at the protocol/transport level, real package publishing | Concrete artifacts (a PyPI package, a passing CI suite) beat a screenshot every time |
-| 6 (Publish) | Writing documentation for a stranger, not for yourself | The actual bottleneck in most "share your MCP server" attempts is documentation, not code |
+| 0 | Inspector as a validation tool | The habit of validating against a spec |
+| 1 | Wrapping a flaky dependency safely (cache, typed errors) | Any "wrap API X as a tool" job task |
+| 2 | Designing a search tool's interface (tool vs. resource) | API-design judgment beyond MCP |
+| 3 | Idempotency + CRUD semantics under a tool interface | Universal backend skill in an agent context |
+| 4 | Proving an interop claim, not asserting it | The habit that separates impressive-sounding from verifiably-true |
+| 5 | Protocol/transport-level testing + real publishing | A PyPI package + passing CI beat a screenshot |
+| 6 | Docs for a stranger | The real bottleneck in "share your server" is docs, not code |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **Thinking a working demo with your own client is the same as a compliant server.** It isn't — only cross-client verification proves that.
-- **Skipping error-path tests.** "It works when I give it good input" tells you almost nothing about whether the server is safe to depend on.
-- **Conflating tools and resources.** A read-only listing (like `task_board`) is a better fit for MCP's `resource` concept than forcing it into a `tool` that happens to take no meaningful arguments — this distinction is explicitly tested in the understanding-check questions.
-- **Treating "published" as equivalent to "code is on GitHub."** A real package on PyPI, installable by a stranger with one command, is a meaningfully stronger and different claim.
-- **Over-building one server into a mini-app.** The Knowledge-Store server needs a good `search_documents`/`get_document` pair, not a web UI or a full production RAG pipeline — that would be redundant with Project 10 anyway.
+- **Local demo with your own client = compliant.** Only cross-client verification proves it.
+- **Skipping error-path tests.** "Works on good input" says little about safety to depend on.
+- **Tools/resources conflated.** A read-only listing (`task_board`) is a resource, not a no-arg tool.
+- **"Published" = "on GitHub."** PyPI + registry is stronger.
+- **Over-building one server into a mini-app.** Redundant with Project 10.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (Tool-provider authorship):** What design decisions does authoring a server force you to make that consuming an existing tool never does? Give one concrete example from one of your 3 servers.
+**Q1 (Authorship).** What design decisions does authoring force that consuming never does? One concrete example from your servers.
+**A1.** Whether a capability is a tool or a resource; the error taxonomy; idempotency semantics. Example: for the task-tracker you must decide that `complete_task` on an already-done task returns it unchanged (idempotent) while an unknown id is a typed not_found error — a consumer never makes that call.
 
-**After §2 (Protocol compliance):** Why is "it works when my own test client calls it" insufficient evidence that a server is protocol-compliant? What specifically could be wrong that your own client would never notice?
+**Q2 (Compliance).** Why is "works with my own client" insufficient? What could your own client never notice?
+**A2.** Your client might always send an optional field, or tolerate a slightly-wrong schema, or use one transport. A spec-compliant third-party client might omit that field, strictly validate the schema, or use a different transport — exposing assumptions your client masked.
 
-**After §2 (Idempotency/error semantics):** For your Task-Tracker server, what should happen if `complete_task` is called on a task ID that doesn't exist at all (vs. one that's already completed)? Why should these two cases behave differently?
+**Q3 (Idempotency/errors).** For the task-tracker, how should `complete_task` behave on a nonexistent id vs. an already-completed one? Why differently?
+**A3.** Nonexistent id → a typed not_found error (the caller referenced something that doesn't exist — a real problem). Already-completed → return the task unchanged (idempotent success — the desired end state already holds, retries must be safe). Conflating them either hides real errors or turns safe retries into failures.
 
-**After §2 (Publishing):** What's the difference, in practice, between "I built an MCP server" and "I published an MCP server"? Which one is on your resume, and can you back up that specific word?
+**Q4 (Publishing).** Difference in practice between "I built" and "I published" an MCP server? Which is on your resume?
+**A4.** "Built" = code exists and runs for you. "Published" = a stranger runs `pip install`, follows your README with no undocumented steps, and it works — plus it's discoverable in the registry. The resume says "published," and the PyPI/registry link backs the word.
 
-**After Phase 4 (Cross-client verification):** You try connecting a different MCP client to your Knowledge-Store server and it fails. What are the first two things you'd check, given what you know about tool/resource typing?
+**Q5 (Cross-client).** A different client fails to connect to your knowledge-store server. First two things to check, given tool/resource typing?
+**A5.** (1) Schema validity — did FastMCP generate a valid JSON Schema from your type hints (e.g., an unsupported/undocumented type on a param)? Run Inspector. (2) Tool-vs-resource mismatch — is `document_index` declared as a resource but the client expects a tool, or vice versa, or an unclamped `top_k` causing a validation error? Check the handshake/capability negotiation and the exact error the client reports.

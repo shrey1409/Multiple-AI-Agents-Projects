@@ -2,67 +2,72 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| Naive RAG (retrieve top-k, stuff into prompt) | All 4 variants are refinements on this baseline; you need to know what they're improving on | Any introductory RAG tutorial/blog post |
-| RAGAS's metric definitions (faithfulness, answer relevancy, context precision/recall) | You're reporting these numbers and need to know what each actually measures | RAGAS's own documentation on its core metrics |
-| Basic experiment design (controlling variables, what a confound is) | The entire project's validity depends on holding corpus/embeddings/chunking constant across variants | Any short primer on controlled comparison / A-B testing methodology |
+| Naive RAG (retrieve top-k, stuff prompt) | All variants refine this baseline | Any intro RAG tutorial |
+| RAGAS metric definitions | You report these numbers | RAGAS docs → "Metrics"; know the formulas below |
+| Experiment design (controls, confounds) | The project's validity depends on it | Any A/B-testing / controlled-comparison primer |
+| Basic significance (CI on a small sample) | ~13 Qs/category is small; don't over-claim | Any intro to confidence intervals |
 
 ## 2. Core Concepts Taught
 
-### Agentic RAG
-**What:** RAG where an agent decides, per query, *whether* to retrieve at all and *what* retrieval strategy to use (single lookup, multiple lookups, different sources), rather than always retrieving the same fixed way.
-**Why it exists:** naive RAG retrieves unconditionally even when the LLM already knows the answer or when a single lookup isn't enough for a multi-hop question — an agentic decision layer can skip unnecessary retrieval or escalate to a more thorough strategy as needed.
-**Where it's used here:** the Agentic RAG variant — the strategy-choosing step is the whole point; make sure your implementation actually varies its retrieval behavior based on the query, or it's not meaningfully "agentic."
+### The four variants (and what each *mechanism* buys over naive)
 
-### Adaptive RAG
-**What:** routing incoming queries to a no-retrieval, single-step-retrieval, or multi-step-retrieval path based on an *estimated query complexity* classification, made explicitly before any retrieval happens.
-**Why it exists:** not all questions need retrieval (a definitional question the model already knows) and not all questions are answerable in one retrieval hop (a comparison across two documents) — classifying complexity upfront lets you spend retrieval budget where it's needed and save latency/cost where it's not.
-**Where it's used here:** the Adaptive RAG variant — distinguished from Agentic RAG by routing on *complexity classification made upfront*, versus Agentic RAG's *strategy choice that can also happen mid-process*; this project's report should make this distinction concrete with actual examples, since it's easy to blur in practice (see the misconception below).
+**Agentic RAG.** An agent decides, per query, *whether* to retrieve and *what* strategy (skip, single, iterate). Buys: no wasted retrieval when the model already knows; escalation for multi-hop. Watch: it must actually vary behavior by query, or it's not agentic.
 
-### Corrective RAG (CRAG)
-**What:** grading retrieved chunks for relevance before generating an answer, and falling back to an alternative retrieval source (commonly web search) when the grade is poor.
-**Why it exists:** naive RAG trusts whatever the retriever returns, even when nothing relevant exists in the corpus — CRAG adds a self-check specifically on retrieval quality, with an escape hatch.
-**Where it's used here:** the Corrective RAG variant — you built a simpler version of this already in Project 01's Fundamentals agent; this project isolates and evaluates it on its own, side by side with the other 3.
+**Adaptive RAG.** Routes by an *upfront query-complexity classification* (no-retrieval / single / multi-step). Buys: spend retrieval budget where needed, save latency on easy Qs. Distinguished from Agentic by *when* the decision happens (once, upfront, on complexity) vs. Agentic's mid-loop, strategy-level choice.
 
-### Self-RAG
-**What:** the model reflects on its own *generated answer* (not just the retrieved chunks) and re-retrieves if the answer isn't well-supported by what was retrieved.
-**Why it exists:** CRAG checks retrieval quality before generation; Self-RAG checks the generated answer's groundedness *after* generation — catching a different failure mode (good retrieval, but the model still drifted from the retrieved context while writing the answer).
-**Where it's used here:** the Self-RAG variant — the reflection-then-conditional-re-retrieval loop is what distinguishes it from CRAG; your report should be able to name a case where this specifically catches something CRAG wouldn't (or vice versa).
+**Corrective RAG (CRAG).** Grades retrieved chunks *before* generating; web-fallback on poor grade. Buys: catches "nothing relevant in the corpus" before the model hallucinates from junk.
 
-### Controlled experimentation as an evaluation methodology
-**What:** holding every variable constant across the systems you're comparing except the one thing you're actually testing (here: the RAG control-flow pattern), so that observed differences in the results can be attributed to that one variable.
-**Why it exists:** without this discipline, a comparison is confounded and its conclusions are unreliable — you can't tell if Corrective RAG "won" because of its grading step or because it happened to use a slightly different chunking strategy.
-**Where it's used here:** the entire Phase 0 "shared foundation" design — the single most important methodological decision in this project.
+**Self-RAG.** Reflects on the *generated answer's* groundedness; re-retrieves if unsupported. Buys: catches a different failure than CRAG — good retrieval but the model drifted from context while writing.
+
+CRAG checks *retrieval* pre-generation; Self-RAG checks the *answer* post-generation. A question with good chunks but a drifting answer is caught by Self-RAG, not CRAG; a question with no relevant chunks is caught by CRAG's grade, not Self-RAG's answer-check (which might pass a confidently-wrong answer).
+
+### RAGAS metrics (what they actually compute)
+- **Faithfulness:** fraction of claims in the answer that are supported by the retrieved context (answer-vs-context grounding). Low = hallucination.
+- **Answer relevancy:** how well the answer addresses the question (answer-vs-question).
+- **Context precision:** of the retrieved chunks, how many are actually relevant (retrieval quality, precision).
+- **Context recall:** of the info needed (per the gold answer), how much the retrieved context covers (retrieval quality, recall).
+Faithfulness/relevancy grade *generation*; precision/recall grade *retrieval* — which is why you report all four: a variant can retrieve well but generate unfaithfully, or vice versa.
+
+### Controlled experimentation
+**What.** Hold everything constant except the one variable under test (here: RAG control-flow), so observed differences are attributable to it.
+**Why it exists.** Without it, a comparison is confounded — you can't tell if CRAG "won" because of its grader or because it happened to chunk differently.
+**Where here.** The frozen Phase-0 foundation — the single most important methodological decision.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Shared foundation) | Controlled-experiment design for AI systems | A rare and valuable rigor signal — most portfolio RAG projects report one number with no comparison baseline |
-| 1 (CRAG) | Retrieval-quality grading and fallback design | Deepens what you built in Project 01, now studied in isolation |
-| 2 (Self-RAG) | Post-generation groundedness checking | A distinct self-correction pattern from Project 01's report-level critic |
-| 3 (Adaptive RAG) | Query-complexity routing | Directly useful for cost/latency optimization in any real RAG deployment |
-| 4 (Agentic RAG) | Agent-driven retrieval strategy selection | The most "agentic" of the four — reinforces agentic decision-making design from Project 01 |
-| 5 (Bake-off+RAGAS) | Running and interpreting a real multi-system evaluation | The specific, rare skill of "I can tell you which RAG architecture to use and why, with numbers" |
-| 6 (Report) | Communicating a nuanced, category-dependent result clearly | Avoids the common trap of "my system got 0.85 faithfulness" with no comparative context |
+| 0 | Controlled-experiment design for AI | Rare rigor signal — most RAG projects report one number with no baseline |
+| 1 | Retrieval grading + fallback + a naive baseline | Deepens Project 01's CRAG, studied in isolation |
+| 2 | Post-generation groundedness checking | A distinct self-correction pattern |
+| 3 | Query-complexity routing | Direct cost/latency optimization for any RAG deployment |
+| 4 | Agent-driven retrieval strategy | The most "agentic" variant |
+| 5 | Running + interpreting a multi-system eval | "I can tell you which RAG to use and why, with numbers" |
+| 6 | Communicating a category-dependent result | Avoids "my system got 0.85" with no context |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **Believing Agentic RAG and Adaptive RAG are basically the same thing.** They're closely related but conceptually distinct (see §2 above); collapsing them into identical implementations is the single most common mistake in this project — be deliberate about the distinction and demonstrate it with examples.
-- **Varying the corpus, chunking, or embedding model between variants "for convenience."** Immediately invalidates the comparison; lock these down once and never touch them per-variant.
-- **Reporting only aggregate scores.** Hides the actually useful finding (which variant wins on which question type); always break down by category.
-- **Assuming RAGAS's LLM-based metrics are ground truth.** They're model-graded, same caveat as the LLM-as-judge concept in Project 03 — consider a different judge model than your generation model.
-- **Skipping the "no answer in corpus" question category.** This category tests a distinct and important failure mode (hallucinating an answer when none exists) that easy/multi-hop questions don't exercise.
+- **Agentic ≈ Adaptive.** Distinct (see §2); collapsing them is the #1 mistake.
+- **Varying corpus/chunking/embeddings per variant.** Invalidates the comparison.
+- **Aggregate-only scores.** Hide which variant wins where.
+- **RAGAS metrics as ground truth.** Model-graded; use a different judge model.
+- **Skipping no-answer questions.** Misses the hallucinate-when-nothing-exists failure.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (Agentic vs. Adaptive RAG):** In your own words, what's the structural difference between these two variants? Point to the specific place in each implementation where that difference shows up in code.
+**Q1 (Agentic vs. Adaptive).** Structural difference? Where in each impl does it show?
+**A1.** Adaptive: a classifier node runs *once at the start* and routes to a fixed path by complexity. Agentic: an agent loop decides retrieval per step and can re-retrieve mid-process. In code, Adaptive has an upfront router→branch; Agentic has a loop with a retrieve-or-answer decision each iteration.
 
-**After §2 (Corrective RAG):** What specific failure mode does CRAG's grading step catch that naive RAG would miss? Give a concrete example question from your test set.
+**Q2 (CRAG).** What failure does CRAG's grading catch that naive misses? Concrete example.
+**A2.** Retrieval returning nothing relevant. Example: ask about a company not in the corpus — naive stuffs irrelevant chunks and the model hallucinates; CRAG grades them low (mean<0.5) and web-falls-back or abstains.
 
-**After §2 (Self-RAG):** How is Self-RAG's re-retrieval trigger different from CRAG's fallback trigger? Could a single question expose a case where one catches a problem and the other doesn't?
+**Q3 (Self-RAG vs. CRAG).** How is Self-RAG's re-retrieval trigger different from CRAG's fallback trigger? A case exposing the difference?
+**A3.** CRAG triggers on poor *retrieval grade* (pre-generation); Self-RAG triggers on the *answer* being unsupported (post-generation). Case: good chunks retrieved (CRAG passes) but the model writes a claim not in them — Self-RAG's answer-check catches the drift; CRAG never looks at the answer.
 
-**After §2 (Controlled experimentation):** Name three things you held constant across all 4 variants in this project, and explain what conclusion you couldn't draw if you'd let any one of them vary.
+**Q4 (Controls).** Name three things held constant across variants; what conclusion is impossible if any varies?
+**A4.** Embedding model, chunking, corpus/index. If chunking varied, you couldn't conclude a variant's win came from its control-flow rather than a lucky chunk size — the comparison is confounded.
 
-**After Phase 5 (Bake-off+RAGAS):** Your aggregate faithfulness scores are nearly identical across all 4 variants, but the category breakdown shows large differences. Which number would you actually report, and why?
+**Q5 (Reporting).** Aggregate faithfulness is nearly identical across variants but the category breakdown differs a lot. Which do you report, and why?
+**A5.** The category breakdown. The aggregate averages away the actual signal (e.g., CRAG wins on no-answer, ties elsewhere). The useful, honest finding is per-category; the aggregate would make the report look boring and hide the recommendation.

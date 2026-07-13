@@ -1,51 +1,41 @@
 # RESOURCES.md — Agent Guardrail Gateway
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING · ⚠️ STALE/RESTRUCTURED · ❓ UNCONFIRMED (flagged, do not trust blindly).
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed present.
 
 ## 1. What to clone / download
 
 ### NeMo Guardrails (NVIDIA) — read-only design reference
-
 ```bash
-git clone --depth 1 https://github.com/NVIDIA/NeMo-Guardrails.git /tmp/ref-nemo-guardrails
+git clone --depth 1 https://github.com/NVIDIA/NeMo-Guardrails.git /tmp/ref-nemo-guardrails   # ✅
 ```
-Status: ✅ CONFIRMED WORKING (README returned HTTP 200). A production-grade guardrails framework — read its docs for how it structures input/output rails and action allow-listing; useful design-pattern reference even if you hand-roll your own gateway rather than adopting this framework wholesale (hand-rolling is recommended here so you actually learn the mechanics, per this project's PLAN.md rationale).
+Production guardrails framework — read how it structures input/output rails + action allow-listing. Hand-roll your own gateway (so you learn the mechanics) but borrow the rail design.
 
-### Guardrails AI (guardrails-ai/guardrails) — read-only design reference
-
+### Guardrails AI — read-only design reference
 ```bash
-git clone --depth 1 https://github.com/guardrails-ai/guardrails.git /tmp/ref-guardrails-ai
+git clone --depth 1 https://github.com/guardrails-ai/guardrails.git /tmp/ref-guardrails-ai   # ✅
 ```
-Status: ✅ CONFIRMED WORKING (README returned HTTP 200). Another established guardrails library, structured around validators — read for its validator-composition pattern as a second reference point alongside NeMo Guardrails.
+Validator-composition pattern as a second reference alongside NeMo.
 
-### Microsoft Presidio (PII detection/anonymization) — ❓ location unconfirmed
-
+### Microsoft Presidio (PII detection) — CONFIRMED (corrects the earlier ❓)
 ```bash
-# The exact current canonical GitHub location for Presidio could not be confirmed during
-# this planning session (raw README checks against microsoft/presidio and a
-# possible data-privacy-stack/presidio successor both 404'd). Search for
-# "Microsoft Presidio PII detection" at implementation time to find the current repo
-# rather than trusting either URL below without verifying it first:
-# https://github.com/microsoft/presidio  (may have moved/transferred stewardship)
+git clone --depth 1 https://github.com/microsoft/presidio.git /tmp/ref-presidio   # ✅ EXISTS
 ```
-**❓ UNCONFIRMED — verify before relying on this.** If Presidio is genuinely unavailable or moved, spaCy's built-in NER (`en_core_web_sm` or similar) plus a regex library for structured PII (SSNs, credit-card-like numbers, phone numbers) is a perfectly adequate substitute for Phase 1's PII redaction layer and doesn't depend on this specific project.
+**Correction:** the earlier file flagged Presidio as ❓ UNCONFIRMED — that was a planning-sandbox artifact. `microsoft/presidio` exists and is the recommended PII detection/anonymization engine. Use it for Phase 1, or fall back to spaCy `en_core_web_sm` NER + regex (with a Luhn check for card numbers) if you want zero extra heavy deps.
 
-### OWASP LLM Top 10 project (prompt-injection reference)
-
+### OWASP LLM Top 10 (injection pattern source)
 ```bash
-git clone --depth 1 https://github.com/OWASP/www-project-top-10-for-large-language-model-applications.git /tmp/ref-owasp-llm-top10
+git clone --depth 1 https://github.com/OWASP/www-project-top-10-for-large-language-model-applications.git /tmp/ref-owasp-llm-top10   # ✅
 ```
-Status: ✅ CONFIRMED WORKING (README returned HTTP 200). This is your primary source for building a defensible, documented prompt-injection pattern library (PLAN.md §8) rather than inventing attack patterns ad hoc.
+Your primary source for a defensible, documented injection pattern library and the **named** adversarial corpus your ≥85% claim is scoped to.
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| NeMo Guardrails | Read-only — rail/action-allow-list design pattern reference | Phase 2, 4 |
-| Guardrails AI | Read-only — validator composition pattern reference | Phase 1, 2 |
-| Presidio (if located) or spaCy NER fallback | Reuse as-is (Presidio) or adapt (spaCy + regex) — your PII detection engine | Phase 1 |
-| OWASP LLM Top 10 | Reuse as-is — source patterns for your adversarial prompt-injection test set | Phase 2, 5 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| NeMo Guardrails | repo root | Read-only — rail/allow-list design | 2, 4 |
+| Guardrails AI | repo root | Read-only — validator composition | 1, 2 |
+| Presidio | `microsoft/presidio` | Reuse — PII engine (or spaCy+regex fallback) | 1 |
+| OWASP LLM Top 10 | repo root | Reuse — injection patterns + named corpus | 2, 5 |
 
 ## 3. Target agent
-
-This project requires a target agent to protect — reuse Project 01's FastAPI endpoint (built in this same portfolio) rather than building a new one, keeping the gateway's own build focused on the 4 protections rather than re-solving agent design.
+Reuse Project 01's Contract-compliant endpoint as the protected target. The allow-list reads proposed actions from the target's returned `trajectory` (Target Agent Contract) — build Project 01 (or 02) first, or stub a Contract-shaped endpoint.

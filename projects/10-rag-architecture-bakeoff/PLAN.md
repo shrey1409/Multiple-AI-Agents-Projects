@@ -1,124 +1,130 @@
-# PLAN.md — RAG Architecture Bake-Off (New Project)
+# PLAN.md — RAG Architecture Bake-Off
 
-**Why this project exists (not in the original 8):** the curated list highlights 4 distinct LangGraph RAG patterns (Agentic, Adaptive, Corrective, Self-RAG) as "the state of the art... knowing all four is a differentiator" — but nothing in the original 8 projects actually implements and compares all four head-to-head. Project 01 uses Corrective RAG as one sub-component; this project makes RAG architecture itself the subject, producing a citable, numbers-backed comparison the other projects only gesture at individually.
+**Why this project exists (not in the original 8).** The curated list highlights 4 distinct LangGraph RAG patterns (Agentic, Adaptive, Corrective, Self-RAG) as a differentiator — but nothing in the original 8 implements and compares all four head-to-head. Project 01 uses CRAG as one sub-component; this project makes RAG architecture itself the subject, producing a citable, numbers-backed comparison the others only gesture at.
 
 ## 1. Objective & Success Criteria
 
-Implement all four RAG variants — Agentic RAG, Adaptive RAG, Corrective RAG (CRAG), and Self-RAG — over the *same* document set and the *same* question set, then benchmark them head-to-head on faithfulness, answer relevancy, context precision/recall (via RAGAS), plus latency and cost per query. Publish the comparison as the project's headline artifact.
+Implement all four RAG variants over the *same* corpus and the *same* question set, then benchmark head-to-head on faithfulness, answer relevancy, context precision/recall (RAGAS), plus latency and cost. Publish the comparison as the headline artifact.
 
-| Metric | Target |
-|---|---|
-| RAG variants implemented and evaluated on identical data/questions | 4/4 |
-| RAGAS metrics computed per variant (faithfulness, answer relevancy, context precision, context recall) | all 4 metrics × all 4 variants |
-| Eval question set size | ≥40 questions spanning easy factual, multi-hop, and no-answer-in-corpus categories |
-| Cost/latency reported per variant, per question category | reported for all 4 × 3 categories |
-| A clear, data-backed recommendation ("use X when...") | written, grounded in the actual numbers, not generic advice |
+| Metric | Target | How measured |
+|---|---|---|
+| Variants implemented on identical data/questions | 4/4 | shared harness |
+| RAGAS metrics per variant | all 4 metrics × 4 variants × 3 categories | RAGAS |
+| Question set size | ≥40, spanning easy-factual / multi-hop / no-answer | committed `questions.json` |
+| Cost/latency per variant per category | reported | token + wall-clock accounting |
+| Data-backed "use X when Y" recommendation | written, grounded in the numbers | README |
 
 ## 2. Architecture
 
 ```mermaid
 flowchart TD
-    DOCS["Shared corpus (same documents for all 4 variants)"] --> IDX[(Shared vector index)]
-    QSET["Shared question set (40+ Qs: easy / multi-hop / no-answer)"] --> RUN[Bake-off Runner]
+    DOCS["Shared corpus (frozen)"] --> IDX[(Shared vector index - frozen config)]
+    QSET["Shared 40+ Qs (easy / multi-hop / no-answer)"] --> RUN[Bake-off Runner]
     IDX --> RUN
-    RUN --> AG[Agentic RAG]
-    RUN --> AD[Adaptive RAG]
-    RUN --> CR[Corrective RAG]
-    RUN --> SR[Self-RAG]
-    AG --> EVAL[RAGAS + latency/cost eval]
-    AD --> EVAL
-    CR --> EVAL
-    SR --> EVAL
-    EVAL --> REPORT["Comparison Report + Recommendation"]
+    RUN --> AG[Agentic RAG] & AD[Adaptive RAG] & CR[Corrective RAG] & SR[Self-RAG] & NB[Naive RAG baseline]
+    AG & AD & CR & SR & NB --> EVAL[RAGAS + latency/cost]
+    EVAL --> REPORT["Comparison grid + recommendation"]
 ```
 
-### Variant roster (what distinguishes each, per PLAN.md's own conceptual grounding)
+Note: add a **Naive RAG baseline** as a 5th column. Without it, "Corrective RAG scores 0.85 faithfulness" has no reference point; against naive you can show what each mechanism *buys*.
 
-| Variant | Core mechanism | Extra components vs. naive RAG |
+### The frozen experiment config (the control — Sonnet never specified it, which is ironic for a controlled experiment)
+
+Locked once in Phase 0, never varied per variant:
+- **Corpus:** a fixed 15–25 document technical set (reuse Project 01's ingested SEC filings if built, else a moderate technical corpus). Must contain genuine multi-hop content (facts split across ≥2 docs) or the multi_hop category is meaningless.
+- **Embedding model:** one model, pinned version.
+- **Chunking:** fixed size (≈800 tokens, 100 overlap), identical across variants.
+- **Index:** one Chroma collection, `k=5` retrieval.
+- **Generation + RAGAS-judge model:** pinned versions; use a *different* model for RAGAS's internal judging than for generation (same-model-bias caveat, per Project 03).
+
+### Per-variant control-flow spec (since the tutorials moved — implement from these, not by reverse-engineering)
+
+| Variant | Nodes/edges | Distinguishing trigger |
 |---|---|---|
-| Agentic RAG | Agent decides *whether and how* to retrieve before answering (may skip retrieval, retrieve once, or retrieve iteratively) | a routing/decision step before retrieval |
-| Adaptive RAG | Routes the query by estimated complexity: no-retrieval / single-step / multi-step retrieval | a query-complexity classifier |
-| Corrective RAG (CRAG) | Grades retrieved chunks; falls back to web search when grade is poor | a grader + a fallback retrieval source |
-| Self-RAG | Reflects on its own generated answer; re-retrieves if the answer isn't well-supported by the retrieved context | a post-generation critique + conditional re-retrieval loop |
+| Naive | retrieve k → generate | none |
+| Corrective (CRAG) | retrieve → **grade each chunk 0/1** → if mean<0.5, web-search fallback → generate | retrieval-quality grade |
+| Self-RAG | retrieve → generate → **critique answer vs. context** → if unsupported, re-retrieve+regenerate (cap 1) | post-generation groundedness |
+| Adaptive | **classify query complexity** {no-retrieval / single / multi-step} → route → generate | upfront complexity classifier |
+| Agentic | agent loop: **decide retrieve? which query?** → (optionally iterate retrieval) → generate | agent-chosen retrieval strategy, can iterate mid-process |
 
-### State schema (pseudocode — shared across variants for fair comparison)
+The Agentic-vs-Adaptive distinction (the #1 collapse risk): Adaptive routes **once, upfront, on complexity**; Agentic **decides and can re-decide mid-loop** what/whether to retrieve. Implement them so this shows in code, and demonstrate it with an example in the report.
+
+### State schema (pseudocode — shared)
 
 ```python
 class BakeOffQuestion(TypedDict):
     question_id: str
     question: str
     category: Literal["easy_factual","multi_hop","no_answer_in_corpus"]
-    gold_answer: str | None       # None for genuinely unanswerable questions
+    gold_answer: str | None       # None for genuinely unanswerable
 
 class VariantRunResult(TypedDict):
-    variant: Literal["agentic","adaptive","corrective","self_rag"]
+    variant: Literal["naive","agentic","adaptive","corrective","self_rag"]
     question_id: str
     retrieved_context: list[str]
     answer: str
-    latency_ms: int
-    cost_usd: float
+    latency_ms: int; cost_usd: float
     ragas_scores: dict            # faithfulness, answer_relevancy, context_precision, context_recall
 ```
 
-**Communication pattern:** each variant is its own small LangGraph, structurally different by design (that's the whole comparison) but sharing the same underlying vector index, the same question set, and the same evaluation harness — the Bake-off Runner is a thin orchestration layer that runs all 4 variants over all questions and hands results to a common RAGAS-based scorer, not a multi-agent system in its own right.
+**Communication pattern.** Each variant is its own small LangGraph, structurally different by design, sharing one index, one question set, one scorer. The Bake-off Runner is thin orchestration, not a multi-agent system.
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| LangGraph for all 4 variants | Matches the curated source material's own reference implementations; keeps the comparison about RAG architecture, not framework differences | Implementing each variant in a different framework — would confound the comparison with framework effects, defeating the point |
-| Same embedding model + same chunking strategy across all 4 | Isolates the comparison to retrieval/generation *control flow* differences, not embedding-quality differences | Different embeddings per variant — makes results incomparable |
-| RAGAS for scoring | Purpose-built metrics for exactly this comparison (faithfulness, relevancy, context precision/recall) | Hand-rolled scoring — reinvents RAGAS's metrics worse and less comparably to published work |
-| A fixed, shared question set with 3 explicit categories | Different RAG variants are expected to shine on different question types (e.g., Adaptive RAG should win on "no-retrieval-needed" easy questions by skipping retrieval entirely) — categorizing lets you show *when* each variant wins, not just an aggregate score | One undifferentiated question set — would hide exactly the nuance this project exists to reveal |
+| LangGraph for all 5 | Matches the source implementations; keeps the comparison about architecture, not framework | Different frameworks per variant — confounds with framework effects |
+| Same embedding + chunking across all | Isolates the comparison to control-flow differences | Per-variant embeddings — incomparable |
+| RAGAS scoring | Purpose-built faithfulness/relevancy/precision/recall | Hand-rolled — worse, incomparable |
+| Fixed categorized question set | Variants shine on different question types | One undifferentiated set — hides the interesting result |
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
+| Phase | Goal | Definition of Done | Est. |
 |---|---|---|---|
-| 0 — Shared foundation | Pick corpus (e.g., a set of technical docs or the SEC filings from Project 01, reused), build one shared vector index, write 40+ categorized questions with gold answers | Index built once; question set reviewed for category balance | 3–4 days |
-| 1 — Corrective RAG | Implement CRAG (grader + web-search fallback) | Runs end-to-end on the full question set | 3–4 days |
-| 2 — Self-RAG | Implement reflect-and-re-retrieve loop | Runs end-to-end; verify it actually re-retrieves on at least one under-supported answer in testing | 3–4 days |
-| 3 — Adaptive RAG | Implement complexity-based routing (no-retrieval/single/multi-step) | Verify the no-retrieval path is actually taken for at least one easy question, not always routed to retrieval | 3–4 days |
-| 4 — Agentic RAG | Implement retrieval-strategy-choosing agent | Runs end-to-end; distinguishable from Adaptive RAG in your own writeup (don't let these two collapse into the same implementation — see risk note) | 3–4 days |
-| 5 — Bake-off + RAGAS | Run all 4 variants over all 40+ questions, compute RAGAS metrics + latency/cost | Full comparison table generated across variants × categories | 4–5 days |
-| 6 — Report + Polish | Write the comparison report with a data-backed recommendation | README leads with the comparison table and a clear "use X when Y" summary | 2–3 days |
+| 0 — Shared foundation | Freeze corpus/index/config; write 40+ categorized Qs w/ gold answers | Index built once; category balance reviewed; config pinned | 3–4 d |
+| 1 — CRAG + Naive baseline | Grader + web fallback; naive baseline | Both run end-to-end on the full set | 3–4 d |
+| 2 — Self-RAG | Reflect-and-re-retrieve loop | Verified to re-retrieve on ≥1 under-supported answer in testing | 3–4 d |
+| 3 — Adaptive | Complexity routing | No-retrieval path verified taken for ≥1 easy Q | 3–4 d |
+| 4 — Agentic | Retrieval-strategy agent | Runs end-to-end; distinguishable from Adaptive in the writeup | 3–4 d |
+| 5 — Bake-off + RAGAS | Run all 5 over all Qs; metrics + latency/cost | Full grid generated | 4–5 d |
+| 6 — Report | Comparison + data-backed recommendation | README leads with the grid + "use X when Y" | 2–3 d |
 
 **Total: ~3–4 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- A shared document corpus — reusing Project 01's SEC filings is a reasonable choice if built after Project 01 (keeps this project's setup cost low); otherwise any moderate technical-document corpus works.
-- Web-search API (only needed for the Corrective RAG variant's fallback path) — reuse Tavily/DuckDuckGo choice from Project 01.
-- RAGAS library (`pip install ragas`) — needs an LLM for some of its metrics (e.g., faithfulness uses an LLM judge internally) — budget accordingly.
-- LLM cost: 4 variants × 40+ questions, several of which involve multiple LLM calls (grading, reflection, routing) — budget a moderate eval run, likely $5-15 total depending on model choice; this is the most LLM-call-intensive project in the portfolio precisely because it's comparing 4 architectures' overhead against each other.
+- The frozen corpus (§2). Web-search API only for CRAG's fallback (reuse Project 01's Tavily/DuckDuckGo).
+- RAGAS (`pip install ragas`) — uses an LLM internally for faithfulness; budget accordingly. Metric import names change across RAGAS versions — pin one and check names against the installed version.
+- LLM cost: 5 variants × 40+ Qs, several with multiple calls (grade/reflect/route) — the most call-intensive project; budget $5–15.
 
 ## 6. Eval Strategy
 
-*(This project's PLAN.md §6 and its actual deliverable are the same thing — the bake-off itself.)*
-
-- **RAGAS metrics per variant per category:** faithfulness, answer relevancy, context precision, context recall — reported as a 4×3 (variant × category) grid, not just 4 aggregate numbers, since the whole value is showing *which variant wins on which question type*.
-- **Cost/latency per variant per category:** CRAG and Self-RAG are expected to cost more on harder questions (extra grading/reflection calls); Adaptive RAG is expected to cost less on easy questions (skips retrieval entirely) — confirm or refute these expectations with your actual numbers rather than assuming them.
-- **Qualitative failure analysis:** for each variant, find and describe at least one question it handles distinctly better or worse than the others, with the actual retrieved context and answer shown — numbers alone don't make the report compelling, concrete examples do.
+- **RAGAS grid:** faithfulness, answer_relevancy, context_precision, context_recall as a **variant × category** grid (not 4 aggregate numbers) — the value is which variant wins on which question type.
+- **Cost/latency per variant per category:** confirm/refute expectations with numbers (CRAG/Self-RAG cost more on hard Qs; Adaptive cheaper on easy). An aggregate latency hides Adaptive's whole point (fast on easy).
+- **Significance:** with ~13 Qs/category, report the metric mean **and** its spread (e.g., a 95% CI or the per-question distribution); don't claim "X beats Y" on a within-noise gap.
+- **Qualitative:** ≥1 concrete example per variant where it distinctly beats/loses to others, with the actual retrieved context and answer.
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **Agentic RAG and Adaptive RAG collapsing into the same implementation.** These are conceptually distinct (Agentic RAG picks a retrieval *strategy*; Adaptive RAG routes by query *complexity*) but naive implementations often end up doing the same thing under different names — be deliberate about what makes each one structurally different, and say so explicitly in the report.
-- **Confounding the comparison with inconsistent setup.** Different chunk sizes, different embedding models, or different corpora per variant invalidates the whole comparison — lock these down once in Phase 0 and never vary them per variant.
-- **RAGAS's own LLM-based metrics inheriting the same-model bias risk noted in Project 03.** Consider using a different model for RAGAS's internal judging than the one generating your variants' answers, for the same reason Project 03 flags this.
-- **Only reporting aggregate scores, hiding the actually interesting result.** The real finding of a bake-off is usually "variant X wins on category Y, loses on category Z" — an aggregate average across categories can wash this out and make the report boring and less useful.
-- **Treating this as "implement 4 tutorials" instead of "run a real experiment."** The value is entirely in the shared, controlled comparison — if each variant runs on different data or you don't compute the same metrics for all 4, you've built 4 disconnected demos, not a bake-off.
+- **Agentic and Adaptive collapse into the same impl** — be deliberate about the upfront-vs-mid-loop distinction and show it.
+- **Confounded setup** — lock corpus/chunking/embeddings/index in Phase 0, never vary per variant.
+- **RAGAS same-model bias** — use a different judge model than the generation model.
+- **Aggregate-only reporting** — breaks by category or the interesting finding washes out.
+- **"4 tutorials, not an experiment"** — the value is the shared, controlled comparison.
 
 ## 8. Implementation Notes for the Executing Model
 
-- Build the shared corpus/index and the shared question set in Phase 0 and freeze them — do not let any later variant's implementation "just add one more document that helps it look better."
-- For the "no_answer_in_corpus" question category, deliberately write a few questions with no supporting information in the corpus — a good RAG system (of any variant) should say so rather than hallucinating an answer; this category specifically tests that failure mode.
-- Use a consistent, versioned model for both answer generation and RAGAS scoring across all 4 variants (pin the model version in your eval config) — a mid-run model version change would invalidate the comparison.
-- When implementing Self-RAG's reflection step, verify with a deliberate test that it actually triggers re-retrieval at least once (e.g., manually construct a case with a weak initial retrieval) — a Self-RAG implementation that never actually re-retrieves in practice isn't demonstrating the pattern, just adding unused code.
-- Report latency/cost per category, not just per variant — an aggregate latency number hides the fact that Adaptive RAG's whole value proposition is being fast on easy questions specifically.
+- Build + **freeze** the shared corpus/index/question set in Phase 0 — no later variant may "add a document that helps it look better."
+- Write a few genuinely unanswerable questions for `no_answer_in_corpus` — a good RAG of any variant should say "not in the corpus," not hallucinate; this category tests that.
+- Pin one model version for generation and one (different) for RAGAS judging across all variants; a mid-run model change invalidates the comparison.
+- Verify Self-RAG actually re-retrieves at least once (construct a weak-initial-retrieval case) — otherwise it's unused code.
+- Report latency/cost per **category**, not just per variant.
+- Include the Naive baseline column so every mechanism's marginal value is visible.
 
 ## 9. Definition of Done
 
-- [ ] All 4 variants implemented on a shared corpus, index, and question set.
-- [ ] Full RAGAS + latency/cost comparison table (4 variants × 3 categories) generated.
-- [ ] At least one concrete qualitative example per variant showing a distinguishing behavior.
-- [ ] README leads with the comparison table and a clear, data-backed "use X when Y" recommendation.
+- [ ] All 4 variants + naive baseline on a shared, frozen corpus/index/question set.
+- [ ] Full RAGAS + latency/cost grid (5 × 3) generated, with spread/CI noted.
+- [ ] ≥1 qualitative example per variant showing a distinguishing behavior.
+- [ ] README leads with the grid and a data-backed "use X when Y" recommendation.

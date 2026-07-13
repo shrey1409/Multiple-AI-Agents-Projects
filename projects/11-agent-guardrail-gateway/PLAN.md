@@ -1,19 +1,19 @@
-# PLAN.md — Agent Guardrail Gateway (New Project)
+# PLAN.md — Agent Guardrail Gateway
 
-**Why this project exists (not in the original 8):** several projects in this portfolio (01, 02) build agents that take consequential actions, and Project 07 explores offensive/defensive security as a CTF-style exercise. None of the original 8 builds a *reusable, standalone safety middleware* that any agent can sit behind — a gap the market rewards, since "I bolted a safety layer onto my own one agent" is a much weaker claim than "I built a gateway that protects any agent."
+**Why this project exists (not in the original 8).** Projects 01/02 build agents that take consequential actions, and Project 07 explores security as a CTF exercise. None builds a *reusable, standalone safety middleware* any agent can sit behind — a gap the market rewards, since "I bolted a safety layer onto my one agent" is far weaker than "I built a gateway that protects any agent."
 
 ## 1. Objective & Success Criteria
 
-Build a middleware/proxy that sits between a user (or an upstream system) and any target agent (point it at Project 01 and/or Project 02), enforcing: PII redaction on both inbound and outbound text, prompt-injection detection on inbound text, spend/rate limits per user/session, and an action allow-list with human-in-the-loop escalation when the target agent attempts something outside the allow-list. Red-team it with an adversarial-prompt eval suite and report block rates.
+A middleware/proxy between a caller and any target agent (point it at Project 01/02 via the Target Agent Contract), enforcing: PII redaction (inbound + outbound), prompt-injection detection (inbound), spend/rate limits per session, and an action allow-list with HITL escalation for anything outside it. Red-team it with an adversarial suite and report block rates.
 
-| Metric | Target |
-|---|---|
-| PII redaction recall on a labeled test set (names, emails, phone numbers, SSNs, credit-card-like numbers) | ≥95% |
-| Known prompt-injection pattern block rate (from a curated adversarial test set) | ≥85% |
-| False-positive rate (legitimate requests wrongly blocked) | <5% |
-| Spend/rate limit enforcement | 100% — no request exceeds the configured budget, verified by code, not sampled |
-| Actions outside the allow-list correctly routed to human escalation, never auto-executed | 100% |
-| Gateway latency overhead added to a passthrough request | <300ms P95 |
+| Metric | Target | How measured |
+|---|---|---|
+| PII redaction recall (names, emails, phones, SSNs, card-like) | ≥95% | labeled synthetic test set |
+| Known prompt-injection block rate on a **named** corpus | ≥85% | curated adversarial set (§5) |
+| False-positive rate (legit requests wrongly blocked) | <5% | benign-but-injection-resembling set |
+| Spend/rate enforcement | 100%, code-verified | boundary test |
+| Actions outside allow-list → escalation, never auto-executed | 100% | structural check |
+| Gateway latency overhead (passthrough, excl. secondary-LLM path) | <300ms P95 | benchmark |
 
 ## 2. Architecture
 
@@ -23,108 +23,109 @@ flowchart TD
     PII_IN --> INJ[Prompt-Injection Detector]
     INJ -->|clean| RATE[Spend/Rate Limiter]
     INJ -->|flagged| BLOCK1["Block + Log"]
-    RATE -->|within budget| TGT["Target Agent (Project 01/02, black-box)"]
-    RATE -->|over budget| BLOCK2["Block: budget exceeded"]
-    TGT --> ALLOW{Action Allow-List Check}
+    RATE -->|within budget| TGT["Target Agent (Contract, black-box)"]
+    RATE -->|over budget| BLOCK2["Block: budget"]
+    TGT -->|proposed actions in trajectory| ALLOW{Allow-List Check}
     ALLOW -->|allowed| PII_OUT[PII Redaction: Outbound]
     ALLOW -->|not allowed| ESC["HITL Escalation"]
     ESC -->|approved| PII_OUT
     ESC -->|denied| BLOCK3["Block + Log"]
-    PII_OUT --> RESP[Response to user]
+    PII_OUT --> RESP[Response]
 ```
 
-### Component roster
+### How the allow-list sees proposed actions (Sonnet's black-box tension, resolved)
 
-| Component | Role | Tools | Reads | Writes |
-|---|---|---|---|---|
-| PII Redaction (inbound/outbound) | Detects and masks PII patterns in text passing either direction | regex + a lightweight NER model (not a full LLM call — must be fast and deterministic-ish) | raw text | redacted text, `pii_findings` (logged, not sent to the target) |
-| Prompt-Injection Detector | Flags inbound text matching known injection patterns (instruction override attempts, role-play jailbreaks, data-exfiltration framing) | pattern library + a lightweight classifier (heuristic first, LLM-based secondary check only if heuristic is ambiguous) | inbound text | `injection_verdict` |
-| Spend/Rate Limiter | Enforces per-user/session token and dollar budgets, and request-rate caps | counter store (Redis is appropriate here — this is exactly the ephemeral-counter use case Redis is good at) | request metadata, budget config | updated counters, `limit_verdict` |
-| Action Allow-List Checker | Inspects the target agent's proposed actions (tool calls) against a configured allow-list | rule check (code, not LLM) | target agent's proposed tool calls | `allow_verdict` |
-| HITL Escalation | Same principle as Project 02, applied to any disallowed action the gateway intercepts | Slack/terminal approval | `allow_verdict`, disallowed action | `human_decision` |
+The allow-list must inspect the target's *proposed tool calls* — but a black-box agent returning only a final answer hides them. Resolution via the **Target Agent Contract** (defined in Projects 01/02/13): the target returns its `trajectory` (including proposed/executed tool calls) in its response. The gateway reads `trajectory[].tool_calls[].name` and checks each against the allow-list. For agents that *execute* actions before responding, the stronger deployment is to place the gateway between the agent and its tools (the agent calls tools *through* the gateway) — document both modes; the Contract mode is the default for this project.
 
-### State/config schema (pseudocode)
+### Component roster + specs
+
+| Component | Role | Mechanism | Writes |
+|---|---|---|---|
+| PII Redaction | Mask PII both directions | regex (structured) + spaCy NER (names/orgs) | redacted text, `pii_findings` (types only) |
+| Injection Detector | Flag inbound injection | heuristic pattern library first; LLM secondary only if ambiguous | `injection_verdict` |
+| Spend/Rate Limiter | Per-session token/$ budgets + rate cap | Redis atomic `INCR` + compare | `limit_verdict` |
+| Allow-List Checker | Check proposed tool calls vs. config allow-list | deterministic (code) | `allow_verdict` |
+| HITL Escalation | Approve/deny disallowed actions | Slack/terminal | `human_decision` |
+
+### PII detection specifics (Sonnet named the layer, not the patterns)
+
+- **Regex, structured:** email (`\b[\w.+-]+@[\w-]+\.[\w.-]+\b`), US phone, SSN (`\d{3}-\d{2}-\d{4}`), credit-card-like (13–16 digits) **plus a Luhn checksum** to cut false positives on arbitrary digit runs.
+- **NER, unstructured:** spaCy `en_core_web_sm` labels `PERSON`, `ORG`, `GPE`, `LOC` for names/places regex can't catch.
+- **Log findings, never values:** `pii_findings` stores `["EMAIL","PERSON"]`, not the actual PII — the audit log must not become a new leak vector.
+
+### Config schema (pseudocode)
 
 ```python
 class GatewayConfig(TypedDict):
-    pii_patterns: list[str]              # regex + NER label types to redact
+    pii_regex_types: list[str]; ner_labels: list[str]
     injection_pattern_library: list[str]
-    per_session_token_budget: int
-    per_session_dollar_budget: float
+    per_session_token_budget: int; per_session_dollar_budget: float
     request_rate_limit_per_minute: int
-    action_allow_list: list[str]         # tool/action names the target may execute without escalation
-
-class GatewayRequestLog(TypedDict):
-    request_id: str
-    session_id: str
-    pii_findings: list[str]              # types found, not the actual PII values
-    injection_verdict: Literal["clean","flagged"]
-    limit_verdict: Literal["ok","blocked_budget","blocked_rate"]
-    proposed_actions: list[str]
-    allow_verdict: Literal["allowed","escalated","denied"]
-    latency_added_ms: int
+    action_allow_list: list[str]        # tool names allowed without escalation
 ```
 
-**Communication pattern:** a synchronous proxy — the gateway wraps every call to the target agent's API (inbound request processing, then a passthrough call, then outbound response processing), structurally similar to how a web-application firewall wraps an HTTP service. It is deliberately agent-agnostic: nothing in the gateway's code should assume anything about the target beyond "it's an HTTP API that accepts text and may propose named actions."
+**Communication pattern.** A synchronous proxy wrapping every call to the target's Contract API (inbound processing → passthrough → outbound processing), like a web-application firewall wraps an HTTP service. Agent-agnostic: the gateway assumes only "an HTTP Contract API that accepts text and returns a trajectory with proposed actions."
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| FastAPI middleware / reverse-proxy design | Natural fit for wrapping an arbitrary downstream HTTP API | Building the gateway as another LangGraph node inside the target agent itself — couples the gateway to one target, defeating the "reusable for any agent" premise |
-| Regex + lightweight NER for PII (not a full LLM call per request) | PII redaction must be fast and applied to every request/response; a full LLM call for this on every message is slow and needlessly expensive | LLM-only PII detection — works but adds unacceptable latency/cost for something structured pattern-matching handles well for common PII types |
-| Heuristic-first, LLM-secondary for prompt-injection detection | Most known injection patterns are catchable by pattern-matching cheaply; reserve the more expensive LLM-based ambiguity check for genuinely unclear cases | LLM-only injection detection on every request — expensive and adds the same self-serving-bias risk noted in Project 03 if the same model family is used everywhere |
-| Redis for spend/rate counters | Ephemeral, fast, exactly the right tool for per-session counters with TTLs | Postgres — durable but unnecessarily heavy for counters that reset every session/day |
-| Deterministic allow-list check (code, not LLM) for actions | Same reasoning as Project 02's validation rules engine — a security boundary must be exact and auditable | LLM-judged "does this action seem OK" — non-deterministic and unauditable, the wrong tool for a hard security boundary |
+| FastAPI reverse-proxy | Natural fit to wrap an arbitrary downstream HTTP API | A LangGraph node inside the target — couples to one agent |
+| Regex + spaCy NER for PII | Fast, applied to every message; deterministic-ish | LLM-per-request PII — unacceptable latency/cost |
+| Heuristic-first, LLM-secondary injection | Most known patterns catch cheaply; reserve LLM for ambiguity | LLM-on-every-request — expensive + same-model-bias risk |
+| Redis atomic counters | Ephemeral per-session counters w/ TTL | Postgres — too heavy for counters |
+| Deterministic allow-list | A security boundary must be exact and auditable | LLM-judged "seems OK" — non-deterministic, unauditable |
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
+| Phase | Goal | Definition of Done | Est. |
 |---|---|---|---|
-| 0 — Setup | Pick target agent (Project 01 or 02), stand up the gateway as a passthrough proxy with no checks yet | A request through the gateway reaches the target and returns unmodified | 2–3 days |
-| 1 — PII Redaction | Inbound + outbound redaction | ≥95% recall on a labeled PII test set (names, emails, phones, SSNs, card-like numbers) | 4–5 days |
-| 2 — Injection Detection | Heuristic + LLM-secondary detector | ≥85% block rate on a curated adversarial prompt set, <5% false positives on a legitimate-request set | 4–5 days |
-| 3 — Spend/Rate Limiting | Per-session budgets and rate caps enforced via Redis counters | A deliberate over-budget test is blocked 100% of the time, verified by code | 3–4 days |
-| 4 — Allow-List + Escalation | Action allow-list check + HITL escalation for disallowed actions | A deliberately out-of-allow-list action from the target agent is escalated, never auto-executed | 4–5 days |
-| 5 — Red-team Eval | Adversarial test suite across all 4 protections, block-rate + false-positive-rate reporting | Full metrics table from §6 generated and committed | 4–5 days |
-| 6 — Polish | Docker, README documenting protections and their measured effectiveness | README leads with the red-team results table | 2–3 days |
+| 0 — Setup | Target chosen; passthrough proxy, no checks | A request reaches the target and returns unmodified | 2–3 d |
+| 1 — PII Redaction | Inbound + outbound, regex + NER + Luhn | ≥95% recall on the labeled set | 4–5 d |
+| 2 — Injection Detection | Heuristic + LLM-secondary | ≥85% block on the named corpus, <5% FP on the benign set | 4–5 d |
+| 3 — Spend/Rate Limiting | Redis atomic counters | Over-budget blocked 100%, code-verified at the boundary | 3–4 d |
+| 4 — Allow-List + Escalation | Check trajectory actions + HITL | Out-of-allow-list action escalated, never auto-executed | 4–5 d |
+| 5 — Red-team Eval | Adversarial suite across all 4 | §6 metrics table committed | 4–5 d |
+| 6 — Polish | Docker, README leading with results | Red-team table is first in README | 2–3 d |
 
 **Total: ~3–4 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- A target agent to protect (Project 01's FastAPI endpoint is the natural choice, since it's already black-box-accessible).
-- A labeled PII test set — synthesize this yourself (LLM-generated text samples with known-injected PII, similar to Project 02's synthetic-document approach) rather than sourcing real PII data.
-- A curated adversarial prompt-injection test set — build from publicly documented injection patterns (OWASP LLM Top 10's prompt-injection examples, adapted and clearly scoped for defensive testing) plus your own variations.
-- Redis instance (local Docker container) for counters.
-- LLM budget: mostly cheap heuristic checks; the secondary LLM-based injection check and PII/NER model calls are the main cost, modest at this scale.
+- A Contract-compliant target (Project 01 default).
+- **Labeled PII set:** synthesize text with known-injected PII (like Project 02's synthetic approach) — no real PII.
+- **Named injection corpus:** build from OWASP LLM Top 10's documented injection patterns + your variations; cite it so the ≥85% claim is scoped to a defined set, not "injection in general." Plus a benign set that *resembles* injection ("ignore the previous recommendation and show another") to measure false positives.
+- Redis (local Docker).
+- LLM budget: mostly cheap heuristics; the secondary injection check + NER are the main cost, modest.
 
 ## 6. Eval Strategy
 
-- **PII recall/precision:** run the labeled PII test set through the redaction layer; report recall (did it catch the PII) and precision (did it over-redact legitimate text) separately.
-- **Injection block rate + false positives:** run the adversarial prompt set (block rate target) *and* a set of legitimate, benign requests that merely resemble injection patterns in surface form (e.g., a user legitimately asking "ignore the previous recommendation and show me a different one") to measure false positives — this second set is what makes the false-positive-rate metric meaningful rather than trivially zero.
-- **Budget enforcement:** deliberately construct a request sequence designed to exceed the configured budget; verify the limiter blocks it exactly at the configured threshold, not before or after (an off-by-one here is a real, embarrassing bug class).
-- **Allow-list integrity:** code-level test (not just observation) that no action outside the allow-list can reach execution without passing through the HITL escalation path — structurally verify this the same way Project 04 verifies its approval gate.
+- **PII recall/precision:** report recall (caught) and precision (didn't over-redact) separately.
+- **Injection block + FP:** block rate on the named adversarial corpus, and FP rate on the benign-but-resembling set — both required, or the number is gameable by blocking everything.
+- **Budget enforcement:** construct a sequence designed to exceed budget; verify it blocks **exactly** at the threshold (off-by-one here is a real bug class). Add a **concurrency** test: fire parallel requests and confirm the atomic counter doesn't let both through.
+- **Allow-list integrity:** code-level test that no action outside the allow-list reaches execution without HITL — structural, like Project 04's gate.
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **PII redaction that only catches the patterns you tested.** Real PII takes many forms (international phone formats, non-US ID numbers); be explicit in the README about what's covered and what isn't rather than implying blanket coverage.
-- **Injection detection that's either too strict (blocks legitimate creative or edge-case requests) or too loose (a simple rephrasing bypasses it).** This tradeoff is inherent — report both the block rate and the false-positive rate honestly rather than optimizing one at the other's expense without disclosing it.
-- **Treating the gateway as a silver bullet.** No prompt-injection or PII defense is 100% — the README should frame this as risk reduction with measured effectiveness, not a claim of perfect safety.
-- **Coupling the gateway to one specific target agent's internals.** If the gateway can only work with Project 01 specifically (not any HTTP-based agent), you've built a feature of Project 01, not a standalone gateway — keep the target genuinely black-box, same principle as Project 03.
-- **Skipping the off-by-one/edge-case testing on budget enforcement.** Rate/spend limiters are notorious for subtle boundary bugs; explicitly test the boundary condition, not just "well under" and "well over" budget cases.
+- **PII redaction only catching tested patterns** — be explicit in the README about coverage (international formats, non-US IDs may be out).
+- **Injection detector too strict/loose** — report both block and FP rates; don't optimize one silently.
+- **Silver-bullet framing** — no injection/PII defense is 100%; frame as measured risk reduction.
+- **Coupling to one target's internals** — keep the target black-box via the Contract.
+- **Budget off-by-one / race** — test the exact boundary and concurrency (atomic `INCR`, not read-then-write).
 
 ## 8. Implementation Notes for the Executing Model
 
-- Keep the target agent genuinely black-box, exactly as in Project 03 — the gateway should only ever call the target's public HTTP API.
-- Log PII *findings* (what type of PII was found and where) for audit purposes, but never log the actual PII values themselves — the audit log should not become a second place PII leaks from.
-- For prompt-injection detection, build the heuristic pattern library from a documented source (OWASP LLM Top 10 examples) rather than inventing patterns ad hoc, so your test methodology is defensible and reproducible.
-- Implement the budget/rate limiter with atomic increment-and-check operations (Redis `INCR` + compare, not a separate read-then-write) to avoid a race condition where concurrent requests both pass the check before either increments the counter.
-- Design the allow-list config as data (a config file), not hardcoded logic, so the same gateway code could plausibly protect a different target agent with a different allow-list — this is what makes the "reusable gateway" claim credible rather than just asserted.
+- Keep the target black-box — only the Contract HTTP API.
+- Log PII **findings/types**, never values.
+- Build the injection pattern library from OWASP LLM Top 10 so methodology is defensible/reproducible.
+- Implement the limiter with atomic `INCR`-and-compare (not read-then-write) to avoid the concurrent-both-pass race.
+- Make the allow-list **config data**, not hardcoded logic — that's what makes "reusable gateway" credible.
+- **Latency budget clarification:** the <300ms P95 excludes the secondary-LLM injection path; when the heuristic is ambiguous and the LLM check fires, that request is allowed to exceed 300ms (or run the LLM check async/sampled). State this in the README so the number is honest.
+- Luhn-check card-like matches to keep PII precision up.
 
 ## 9. Definition of Done
 
-- [ ] Gateway wraps a target agent's API with all 4 protections active.
-- [ ] Red-team eval suite run; PII recall, injection block rate, false-positive rate, and budget-enforcement integrity all reported per §6.
-- [ ] Allow-list/escalation integrity verified by a code-level test, not just observation.
-- [ ] Dockerized; README leads with the red-team results table and an honest statement of coverage limits.
+- [ ] Gateway wraps a target's Contract API with all 4 protections active.
+- [ ] Red-team eval run; PII recall, injection block rate, FP rate, budget integrity reported per §6.
+- [ ] Allow-list/escalation integrity verified by a code-level test.
+- [ ] Dockerized; README leads with the red-team table and an honest coverage-limits statement.

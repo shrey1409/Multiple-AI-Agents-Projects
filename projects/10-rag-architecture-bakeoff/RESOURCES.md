@@ -1,36 +1,37 @@
 # RESOURCES.md — RAG Architecture Bake-Off
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING · ⚠️ STALE/RESTRUCTURED (with recovery instructions).
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed.
 
 ## 1. What to clone / download
 
-### RAGAS (evaluation library)
-
+### RAGAS (scoring engine)
 ```bash
-git clone --depth 1 https://github.com/explodinggradients/ragas.git /tmp/ref-ragas
+git clone --depth 1 https://github.com/explodinggradients/ragas.git /tmp/ref-ragas   # ✅
 pip install ragas
 ```
-Status: ✅ CONFIRMED WORKING. This is the primary scoring library for the entire bake-off (§6 of PLAN.md) — read its docs on the exact current API for faithfulness/answer-relevancy/context-precision/context-recall, since the library's API surface changes across versions; don't assume any older tutorial's exact function calls are current.
+Primary scorer for the whole bake-off. Read its docs on the current API for faithfulness / answer_relevancy / context_precision / context_recall — **metric import names have changed across versions**; pin one version and check names against the installed package.
 
 ### LangGraph's four RAG tutorials (Agentic, Adaptive, Corrective, Self-RAG)
-
 ```bash
 git clone --depth 1 https://github.com/langchain-ai/langgraph.git /tmp/ref-langgraph
-find /tmp/ref-langgraph -iname "*agentic_rag*" -o -iname "*adaptive_rag*" -o -iname "*crag*" -o -iname "*self_rag*"
 ```
-**⚠️ STALE/RESTRUCTURED.** All four curated links —
-`docs/docs/tutorials/rag/langgraph_agentic_rag.ipynb`, `langgraph_adaptive_rag.ipynb`, `langgraph_crag.ipynb`, `langgraph_self_rag.ipynb` (and their `_local` variants) — 404 on `main` as of 2026-07-13, part of the same LangGraph docs reorganization flagged throughout this portfolio. **This is the single most load-bearing set of references in this entire project** — it's worth real effort to `find` their current location (or browse LangGraph's live docs site with normal network access at implementation time) rather than reimplementing all 4 patterns purely from the conceptual descriptions in PROFESSOR-NOTES.md. If you truly cannot locate the updated notebooks, the conceptual descriptions in this project's PLAN.md/PROFESSOR-NOTES.md are sufficient to implement each pattern correctly — treat the tutorials as a time-saver, not a hard dependency.
+**Not 404 — moved to `examples/rag/`.** Verified present:
+- `examples/rag/langgraph_agentic_rag.ipynb` ✅
+- `examples/rag/langgraph_adaptive_rag.ipynb` ✅ (and `langgraph_adaptive_rag_local.ipynb`, `..._cohere.ipynb`)
+- `examples/rag/langgraph_crag.ipynb` ✅ (and `langgraph_crag_local.ipynb`)
+- `examples/rag/langgraph_self_rag.ipynb` ✅ (and `langgraph_self_rag_local.ipynb`, `..._pinecone_movies.ipynb`)
+
+This is the most load-bearing reference set in the project — and it's fully recovered. Adapt each to your frozen config. (The per-variant control-flow specs in PLAN §2 are also sufficient to implement each pattern if you prefer not to follow the notebooks.)
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| RAGAS | Reuse as-is — your scoring engine for the whole comparison | Phase 5 |
-| LangGraph Agentic RAG tutorial (once located) | Adapt — your Phase 4 implementation | Phase 4 |
-| LangGraph Adaptive RAG tutorial (once located) | Adapt — your Phase 3 implementation | Phase 3 |
-| LangGraph Corrective RAG (CRAG) tutorial (once located) | Adapt — your Phase 1 implementation; also the basis of Project 01's Fundamentals agent if built first | Phase 1 |
-| LangGraph Self-RAG tutorial (once located) | Adapt — your Phase 2 implementation | Phase 2 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| RAGAS | repo / `pip install ragas` | Reuse — scoring engine | 5 |
+| LangGraph Agentic RAG | `examples/rag/langgraph_agentic_rag.ipynb` | Adapt — Phase 4 | 4 |
+| LangGraph Adaptive RAG | `examples/rag/langgraph_adaptive_rag.ipynb` | Adapt — Phase 3 | 3 |
+| LangGraph CRAG | `examples/rag/langgraph_crag.ipynb` | Adapt — Phase 1 (and basis of Project 01's Fundamentals agent) | 1 |
+| LangGraph Self-RAG | `examples/rag/langgraph_self_rag.ipynb` | Adapt — Phase 2 | 2 |
 
 ## 3. Corpus reuse
-
-If Project 01 is already built, reuse its ingested SEC filings as this project's shared corpus (PLAN.md §0/§5) — this keeps setup cost low and lets you compare RAG architectures on a corpus you already understand well. Otherwise, any moderate (10-30 document) technical corpus works; just ensure it's rich enough to contain genuine multi-hop questions (information split across 2+ documents) for the "multi_hop" question category.
+If Project 01 is built, reuse its ingested SEC filings as the shared corpus (keeps setup cheap on a corpus you understand). Otherwise any moderate (15–25 document) technical corpus — just ensure it contains genuine multi-hop content (facts split across ≥2 documents) so the `multi_hop` category is real.
