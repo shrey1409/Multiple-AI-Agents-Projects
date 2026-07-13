@@ -1,37 +1,38 @@
 # RESOURCES.md — Self-Healing SQL Analytics Agent
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING · ⚠️ STALE/RESTRUCTURED (with recovery instructions).
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed.
 
 ## 1. What to clone / download
 
 ### Spider benchmark (data + eval methodology)
-
 ```bash
-git clone --depth 1 https://github.com/taoyds/spider.git /tmp/ref-spider
+git clone --depth 1 https://github.com/taoyds/spider.git /tmp/ref-spider   # ✅ on the `master` branch (`main` 404s)
+ls /tmp/ref-spider   # evaluation.py, process_sql.py, baselines/, evaluation_examples/  ✅
 ```
-Status: ✅ CONFIRMED WORKING on the **`master`** branch specifically (`main` 404s — this repo predates the `main`-as-default convention, don't assume `main` universally). Use its bundled databases and gold-query files for Phase 0/4; use its evaluation script/methodology (not a hand-rolled comparison) so your reported accuracy is comparable to published Spider results, per PLAN.md §7.
+Use its bundled SQLite databases + gold-query files (Phase 0/4) and its **`evaluation.py`** for execution-match scoring so your number is comparable to published Spider results. Caveat: this code is Python-2-era — run it under a compatible interpreter or a maintained fork; don't hand-roll comparison logic.
 
-### LangGraph SQL Agent tutorial
-
+### LangGraph SQL agent tutorial
 ```bash
 git clone --depth 1 https://github.com/langchain-ai/langgraph.git /tmp/ref-langgraph
-find /tmp/ref-langgraph -iname "*sql*"
 ```
-**⚠️ STALE/RESTRUCTURED.** The curated link (`docs/docs/tutorials/sql-agent.ipynb`) 404s on `main` as of 2026-07-13 — same LangGraph docs reorganization flagged across this portfolio's other RESOURCES.md files. Run the `find` above to locate the current path; it's the closest direct reference for the schema-inspection + query-generation flow.
+Moved to `examples/` — verified path: **`examples/tutorials/sql-agent.ipynb`** ✅. Adapt its schema-introspection-then-generate flow; you add the static guard + self-check/retry loop it doesn't cover.
 
-### AutoGen NL-to-SQL Spider notebook and auto-feedback code-execution notebook
-
+### AutoGen SQL + self-correction notebooks (read-only, legacy)
 ```bash
-curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_sql_spider.ipynb
-curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_auto_feedback_from_code_execution.ipynb
+curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_sql_spider.ipynb                      # ✅ 200
+curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_auto_feedback_from_code_execution.ipynb # ✅ 200
 ```
-Status: ✅ CONFIRMED WORKING (`agentchat_sql_spider.ipynb` returned HTTP 200 during planning; the auto-feedback notebook is the same family of AutoGen 0.2 notebooks already verified working for other projects in this portfolio — spot-check it yourself before relying on it, same URL pattern). The Spider notebook shows AutoGen's own approach to this exact benchmark — read it for their prompt/schema-context design even though you're building in LangGraph, not AutoGen. The auto-feedback notebook is the canonical "self-healing code execution loop" reference for the retry/self-check pattern.
+⚠️ `0.2` branch = legacy (AutoGen in maintenance mode). The Spider notebook shows AutoGen's schema-context/prompt design for this exact benchmark; the auto-feedback notebook is the canonical "execute → check → feed error back → retry" reference for your self-check loop.
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| Spider benchmark data + eval script | Reuse as-is — this is your eval dataset and scoring methodology, don't reinvent it | Phase 0, 4 |
-| LangGraph SQL Agent tutorial (once located) | Adapt — reuse the schema-introspection-then-generate flow; you add the self-check/retry loop it likely doesn't cover in depth | Phase 1 |
-| AutoGen NL-to-SQL Spider notebook | Read-only — compare their schema-context and prompt design against yours | Phase 1, 4 |
-| AutoGen auto-feedback code-execution notebook | Adapt — reuse the "execute, check, feed error back, retry" control-flow idea, applied to SQL instead of general code | Phase 2 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| Spider data + `evaluation.py` | `taoyds/spider` (master) | Reuse — dataset + scoring | 0, 4 |
+| LangGraph SQL agent | `examples/tutorials/sql-agent.ipynb` | Adapt — introspect-then-generate | 1 |
+| AutoGen SQL Spider (0.2) | `notebook/agentchat_sql_spider.ipynb` | Read-only — prompt/schema design | 1, 4 |
+| AutoGen auto-feedback (0.2) | `notebook/agentchat_auto_feedback_from_code_execution.ipynb` | Adapt — execute/check/retry control flow | 2 |
+
+## 3. Also useful
+- `sqlglot` (`pip install sqlglot`) — parse generated SQL into an AST for the static statement-type guard (Phase 0) and for nicer, structured error feedback than a raw driver exception.
+- `shrey1409/500-AI-Agents-Projects` → `agents/04-sql-query-agent/` — a simple single-file NL-to-SQL agent; skim for prompt ideas, not architecture.

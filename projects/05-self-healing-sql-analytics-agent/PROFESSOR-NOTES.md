@@ -2,62 +2,68 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| SQL fundamentals (joins, aggregates, subqueries) | You need to judge whether generated SQL is *reasonable*, not just "runs" | Any standard SQL tutorial — skip if you already know SQL |
-| Database roles/permissions (`GRANT`, read-only users) | The safety boundary in this project depends on it | Your DB's own docs on role-based access (Postgres or SQLite-adjacent tooling) |
-| What a benchmark is and why methodology matters (train/test split, evaluation metric definition) | You'll report a Spider-benchmark number and need to state it precisely | Spider benchmark's own paper/README on its evaluation methodology |
+| SQL joins/aggregates/subqueries | You must judge if generated SQL is *reasonable*, not just "runs" | Any standard SQL tutorial; skip if fluent |
+| DB access control (SQLite `mode=ro`/`PRAGMA query_only`; Postgres `GRANT`) | The safety boundary depends on it | SQLite "URI filenames" + "PRAGMA" docs; Postgres "GRANT" |
+| Benchmark methodology (metric definition, difficulty tags) | You report a Spider number precisely | Spider paper/README on its evaluation |
+| `sqlglot` parsing basics | The static guard parses SQL into an AST | sqlglot README |
 
 ## 2. Core Concepts Taught
 
 ### Self-correction / bounded-retry loops
-**What:** an agent that checks its own output, and — if the check fails — retries with the failure fed back into the next attempt, up to a fixed number of times.
-**Why it exists:** LLM-generated code/queries fail non-trivially often on the first try (wrong column name, wrong join, syntax slip); rather than surfacing every first-attempt failure to the user, a bounded self-correction loop recovers many of them automatically, closing the loop the same way a human developer would (read the error, fix it, try again).
-**How it works:** execute → check the result against cheap heuristics (did it error, is it empty, are values absurd) → if it fails, feed the specific error/heuristic violation back into the generator's next prompt, not just "try again" — and stop after a fixed retry budget regardless of outcome.
-**Where it's used here:** the Self-Check → SQL Generator retry loop, bounded at 3 attempts.
+**What.** The agent checks its own output and, on failure, retries with the failure fed back — up to a fixed cap.
+**Why it exists.** LLM-generated queries fail non-trivially often on the first try (wrong column, wrong join). A bounded loop recovers many the way a developer would: read the error, fix, retry.
+**How it works (mechanism).** execute → check against cheap heuristics → on failure, put the *specific* error/violation into the next prompt (not "try again"). The specificity matters: the model needs the actual error ("no such column: cust_id") to correct, not a generic nudge. Stop after the budget regardless.
+**Where here.** The Self-Check → SQL Generator loop, capped at 3.
 
 ### Schema-grounded generation (schema linking)
-**What:** giving an LLM the actual database schema (table/column names, types, relationships, sample rows) as context before asking it to generate a query against that specific database.
-**Why it exists:** without schema grounding, an LLM will confidently invent plausible-sounding column names that don't exist in your actual database — schema grounding is what makes NL-to-SQL work at all beyond toy examples.
-**Where it's used here:** the Schema Inspector step, cached once per database rather than regenerated per question (a real cost/latency lesson, not just a nicety).
+**What.** Give the LLM the real schema (tables, columns, types, FKs, sample rows) before asking for SQL.
+**Why it exists.** Without grounding, the LLM invents plausible column names that don't exist. Grounding is what makes NL-to-SQL work beyond toys. The sub-problem — picking *which* tables to include when a DB has 50 — is "schema linking," itself an active research area; caching the full schema per DB is a fine middle ground here.
+**Where here.** The Schema Inspector, cached per DB (a real cost/latency lesson).
 
 ### Benchmark-driven evaluation (Spider)
-**What:** evaluating your system against a standardized, published benchmark dataset with a defined metric, instead of only your own ad-hoc test questions.
-**Why it exists:** "it worked on the 5 questions I tried" is not comparable across projects or credible to a reviewer; a named benchmark with a known difficulty level and a precise metric definition (execution accuracy, here) gives your resume claim external validity.
-**Where it's used here:** the entire eval strategy in PLAN.md §6 — this project's core differentiator versus just building "a NL-to-SQL demo."
+**What.** Evaluate against a standardized dataset with a defined metric, not ad-hoc questions.
+**Why it exists.** "It worked on my 5 questions" isn't comparable or credible. Spider's **execution accuracy** (does running the query produce the gold result set) gives external validity. Note it's imperfect: two different questions can share a result set (false positives), and underspecified questions have multiple valid answers — so report the number honestly, not as ground truth.
+**Where here.** The whole §6 eval.
 
-### Least-privilege / structural safety boundaries
-**What:** designing a system so that an unsafe action is *impossible* given the permissions it has, rather than merely *discouraged* by instructions.
-**Why it exists:** prompts are not a security boundary — an LLM can be manipulated or simply err into generating a destructive statement; the only reliable defense is removing its capability to do damage at the infrastructure layer (a read-only DB role here).
-**Where it's used here:** the read-only DB connection, and the explicit adversarial test in the Definition of Done that proves the boundary actually holds.
+### Least-privilege / structural safety
+**What.** Make an unsafe action *impossible* given permissions, not merely *discouraged* by a prompt.
+**Why it exists.** Prompts aren't a security boundary — an LLM can be manipulated or err into a destructive statement. The reliable defense removes the capability (read-only connection) and adds a pre-execution parser guard.
+**Where here.** SQLite `mode=ro` + `PRAGMA query_only` + the `sqlglot` statement-type allowlist, with an adversarial DoD test.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | Configuring least-privilege DB access | A concrete, checkable security practice you can describe in an interview |
-| 1 (Happy path) | Schema-grounded NL-to-SQL generation | The baseline "text-to-SQL agent" skill listed in most data/AI-engineer job postings |
-| 2 (Self-check+retry) | Designing cheap, rule-based sanity checks before reaching for another LLM call | Teaches judgment about when a heuristic beats another model call — a cost/latency-aware engineering instinct |
-| 3 (Narrative+chart) | Turning tabular results into a structured chart spec + natural-language summary | Directly applicable to any "AI analytics" product feature |
-| 4 (Benchmark eval) | Running and honestly reporting a standardized benchmark | Distinguishes your project from unverifiable claims — the "one number beats adjectives" lesson |
-| 5 (Deploy) | Same deploy skills as other projects, reinforced | Repetition across the portfolio is intentional — deployment should become second nature |
+| 0 | Least-privilege DB access + AST-level guarding | A concrete, describable security practice |
+| 1 | Schema-grounded NL-to-SQL | The baseline text-to-SQL skill on most data/AI JDs |
+| 2 | Cheap rule-based checks before another LLM call | Cost/latency-aware engineering instinct |
+| 3 | Tabular results → chart spec + summary | Any "AI analytics" feature |
+| 4 | Running + honestly reporting a benchmark | The "one number beats adjectives" lesson |
+| 5 | Deploy reinforcement | Repetition makes deployment second nature |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **"No error" is treated as "correct."** A query that runs cleanly can still answer the wrong question; self-checks need more than an error/no-error signal.
-- **Relying on prompt instructions for safety instead of DB permissions.** This is the single most common security mistake in NL-to-SQL demos — always verify the boundary with an actual adversarial test, don't just trust the system prompt.
-- **Regenerating the full schema context on every question.** Wastes tokens and latency; cache it per connection/session.
-- **Reporting an accuracy number without specifying the subset and metric.** "70% on Spider" needs a footnote: which databases, how many questions, execution accuracy vs. exact match.
-- **Unbounded retries "until it works."** Without a hard cap, a genuinely unanswerable or malformed question can loop indefinitely and blow your latency/cost budget.
+- **"No error" = "correct."** Add the plausibility dimension.
+- **Prompt-based safety.** Use the connection + guard; verify adversarially.
+- **Regenerating schema per question.** Cache per connection.
+- **Number without subset/metric.** Always footnote it.
+- **Unbounded retries.** Hard cap in code.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (Self-correction):** Why is feeding the *specific* execution error back into the next generation attempt better than simply re-prompting "try again"? What would you expect to happen with the latter?
+**Q1 (Self-correction).** Why is feeding the *specific* error better than "try again"? What happens with the latter?
+**A1.** The specific error tells the model what to fix ("no such column: cust_id" → use `customer_id`), so the retry is targeted. "Try again" gives no new information; the model re-samples the same distribution and usually reproduces a similar error — non-learning retries.
 
-**After §2 (Schema-grounded generation):** What goes wrong if you don't give the LLM the actual schema at all? What goes wrong if you give it every table in a 50-table database for every question?
+**Q2 (Schema grounding).** What breaks with no schema? With every table of a 50-table DB in every prompt?
+**A2.** No schema → the model invents non-existent columns/tables (hallucinated SQL). All 50 tables → wasted tokens, higher latency/cost, and *worse* accuracy (the model is distracted by irrelevant tables) — motivating schema linking.
 
-**After §2 (Benchmark evaluation):** Why is execution accuracy (does running the query give the right result set) a better metric here than exact string match against the gold SQL?
+**Q3 (Benchmark).** Why is execution accuracy better than exact string match against gold SQL?
+**A3.** Semantically equivalent queries can be written many ways (different join order, aliases, subquery vs. JOIN). String match penalizes correct-but-different SQL; execution match compares result sets, which is what actually matters.
 
-**After §2 (Least-privilege):** Design an adversarial test that would catch a destructive-statement vulnerability in this project. What exactly would you check, and where (at the LLM output, or at execution time)?
+**Q4 (Least-privilege).** Design an adversarial test for a destructive-statement vulnerability. What and where do you check?
+**A4.** Prompt the agent with something like "delete all rows where amount is 0" (or inject it), then assert: (a) the `sqlglot` guard classifies the generated statement as non-SELECT and rejects it; (b) even if bypassed, the read-only connection raises on the write. Check at both the guard (pre-exec) and the driver (exec), not just the LLM output.
 
-**After Phase 2 (Self-check+retry):** Your self-healing rate is only 20% — most retries still fail. What are three different places in the pipeline the bug could actually be, and how would you isolate which one it is?
+**Q5 (Self-check debugging).** Self-healing rate is only 20%. Name three places the bug could be and how to isolate.
+**A5.** (1) Feedback not actually in the retry prompt → log the prompt and confirm; (2) checks too weak (they pass wrong results, so no retry triggers) → inspect false "ok" verdicts; (3) generator can't use the feedback (schema wrong/missing) → check whether retried SQL differs and addresses the error. Isolate by logging, per failed question, whether a retry fired, whether SQL changed, and whether the change targeted the reported error.

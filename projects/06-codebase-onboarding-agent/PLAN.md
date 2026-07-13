@@ -2,41 +2,42 @@
 
 ## 1. Objective & Success Criteria
 
-Point this agent at any public GitHub repo: it indexes the code with AST-aware chunking (not naive fixed-size splitting), answers architecture questions with file/line citations, generates a README and an architecture diagram, and produces a "first 5 issues to try" list for new contributors. The single strongest demo in the portfolio, because you can run it live on the interviewer's own repo.
+Point this agent at any public GitHub repo: it indexes the code with AST-aware chunking (not naive fixed-size splitting), answers architecture questions with file/line citations, generates a README and an architecture diagram, and produces a "first 5 issues to try" list. The strongest live demo in the portfolio — run it on the interviewer's own repo.
 
-| Metric | Target |
-|---|---|
-| Answer accuracy with correct file/line citation on a 50-question eval set across 5 repos | ≥80% |
-| Citations that point to a real, existing file/line (not hallucinated) | 100% (code-checked, not LLM-judged) |
-| README quality: does the generated README correctly state the repo's actual entry point/main dependencies | Verified correct on all 5 test repos |
-| Time to index a medium repo (~500 files) | <5 min |
-| Cost to fully onboard one repo (index + generate README + issues list) | <$1 |
+| Metric | Target | How measured |
+|---|---|---|
+| Answer accuracy w/ correct citation, 50-question set across 5 repos | ≥80% | LLM-judge (or manual) for correctness |
+| Citations pointing to a real, existing file/line | 100% | **code-checked**, not LLM-judged |
+| README correctly states actual entry point + main deps | verified on all 5 repos | manual |
+| Time to index a ~500-file repo | <5 min | measured |
+| Cost to fully onboard one repo | <$1 | token accounting |
 
 ## 2. Architecture
 
 ```mermaid
 flowchart TD
     REPO["git clone target repo"] --> AST[AST-Aware Chunker]
-    AST --> IDX[(Vector Store: code chunks + metadata)]
+    AST --> IDX[(Hybrid index: dense + BM25, chunks + metadata)]
     IDX --> QA[Q&A Agent]
     IDX --> RM[README Generator]
-    IDX --> ARCH[Architecture-Diagram Generator]
-    IDX --> ISS[Issue-Finder Agent]
-    QA --> OUT1["Answer + file:line citations"]
+    IMP[Static Import-Graph Builder] --> ARCH[Architecture-Diagram Generator]
+    IDX --> ISS[Issue-Finder]
+    QA --> OUT1["Answer + verified file:line citations"]
     RM --> OUT2["Generated README.md"]
-    ARCH --> OUT3["Mermaid architecture diagram"]
-    ISS --> OUT4["First 5 issues list"]
+    ARCH --> OUT3["Mermaid diagram (module-clustered)"]
+    ISS --> OUT4["First 5 issues"]
 ```
 
 ### Agent roster
 
 | Agent | Role | Tools | Reads | Writes |
 |---|---|---|---|---|
-| AST-Aware Chunker | Parses source files by function/class boundary (not fixed-size text splitting), attaches file/line metadata to each chunk | language-specific AST parser (e.g. Python `ast`, or `tree-sitter` for multi-language) | cloned repo files | code chunks + metadata |
-| Q&A Agent | Answers architecture questions, citing file:line for every claim | vector retriever over indexed chunks | `question`, indexed chunks | `answer`, `citations` |
-| README Generator | Summarizes purpose, structure, setup instructions from the indexed code + any existing docs | retriever, LLM | indexed chunks, existing README/docs if present | `generated_readme` |
-| Architecture-Diagram Generator | Produces a mermaid diagram of module/component relationships | static import-graph analysis (code, not LLM) + LLM for labeling/simplification | import graph, indexed chunks | `architecture_diagram` |
-| Issue-Finder Agent | Scans for TODOs, obvious gaps (missing tests, undocumented public functions), ranks 5 good-first-issues | retriever, static heuristics (grep for TODO/FIXME, missing docstrings) | indexed chunks | `suggested_issues` |
+| AST-Aware Chunker | Parse by function/class boundary; attach file/line metadata; split oversized nodes | `tree-sitter` (multi-lang) or `ast` (Python) | cloned files | code chunks + metadata |
+| Import-Graph Builder | Extract module→module edges per language | per-language import extraction | cloned files | `import_graph` |
+| Q&A Agent | Answers w/ verified file:line citations | hybrid retriever | `question`, index | `answer`, `citations` |
+| README Generator | Purpose/structure/setup from fixed probe queries + existing docs | retriever, LLM | index, existing docs | `generated_readme` |
+| Architecture-Diagram | Mermaid from the import graph, clustered/simplified | import graph + LLM labeling | `import_graph` | `architecture_diagram` |
+| Issue-Finder | TODO/gap scan → ranked scoped issues | grep heuristics + retriever | index | `suggested_issues` |
 
 ### State schema (pseudocode)
 
@@ -44,9 +45,9 @@ flowchart TD
 class CodeChunk(TypedDict):
     chunk_id: str
     file_path: str
-    start_line: int
-    end_line: int
-    kind: Literal["function","class","module_docstring","config"]
+    start_line: int; end_line: int
+    kind: Literal["function","class","method","module_docstring","config"]
+    parent_symbol: str | None    # for split oversized nodes: the enclosing class/function
     content: str
     embedding: list[float]
 
@@ -59,63 +60,81 @@ class OnboardingState(TypedDict):
     suggested_issues: list[dict] | None
 ```
 
-**Communication pattern:** a shared index (vector store + import graph), fanned out to 4 independent consumer agents (Q&A, README, Architecture, Issue-Finder) that don't need to coordinate with each other — this is a "shared-knowledge-base, independent-consumers" pattern, distinct from Project 01's supervisor-routed pattern.
+### Oversized-node handling (the gap Sonnet left)
+
+An 800-line class won't fit one embedding well. Rule: if a function/class node exceeds ~1,500 tokens, split it into sub-chunks (by method for a class, by logical block for a long function), each carrying `parent_symbol` and the accurate line range of the sub-chunk. Retrieval can then return a method chunk but cite the enclosing class in context.
+
+### Retrieval design (Sonnet left it unspecified — code retrieval needs this)
+
+- **Embedding model:** a code-aware embedding (e.g., a code-specialized model) — general prose embeddings under-retrieve on identifiers.
+- **Hybrid search:** BM25 (exact identifier/keyword match — critical for "where is `parse_config` defined") + dense (semantic "how does auth work"), fused by reciprocal-rank fusion. Code Q&A fails on dense-only because identifiers are rare tokens.
+- **k = 8**, then an LLM re-rank to top 4 for the answer prompt.
+
+### Citation verification (split deterministic vs. judged)
+
+- **Deterministic (must be 100%):** the cited `file:start-end` exists in the current index and corresponds to a real chunk. Parse the model's citation, assert the chunk exists; reject/regenerate if not.
+- **Judged (part of the 80% accuracy):** does the cited chunk's *content* actually support the claim. This is the LLM-judge/manual part.
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| `tree-sitter` for multi-language AST parsing | Handles function/class boundaries correctly across many languages without writing a parser per language | Fixed-size text splitting — the exact anti-pattern this project is teaching you to avoid; splits mid-function and destroys citation accuracy |
-| Chroma for the code-chunk vector store | Same reasoning as Project 01 — simple, local, sufficient at this scale | A dedicated code-search engine (e.g. Sourcegraph) — massive overkill for a portfolio project |
-| Static import-graph analysis (not an LLM) for the architecture diagram's structure | Import relationships are exact, deterministic facts — extracting them by parsing is both cheaper and more accurate than asking an LLM to "figure out the architecture" from text alone | Pure LLM-inferred architecture — prone to hallucinating relationships that don't exist in the actual import graph |
-| AutoGen RetrieveChat as a design reference for Q&A retrieval flow | Directly relevant prior art for retrieval-augmented code Q&A | Building the Q&A retrieval flow from scratch with no reference — slower, no reason to skip a working pattern |
+| `tree-sitter` multi-lang AST | Correct function/class boundaries across languages | Fixed-size splitting — the anti-pattern this project teaches against |
+| `ast` (Python) fallback | Faster start if scoping to Python | — |
+| Hybrid dense+BM25 (e.g., Chroma + rank-bm25) | Code retrieval needs identifier-exact + semantic | Dense-only — misses identifier lookups |
+| Static import graph (not LLM) | Import edges are exact facts | LLM-inferred architecture — hallucinates edges |
+| Mermaid w/ module-level clustering | A 500-file graph is unreadable raw | Full per-file graph — illegible |
+
+Note the asymmetry Sonnet glossed: `tree-sitter` gives you multi-language *chunking* cheaply, but *import extraction* is per-language work (Python `import`, JS `import/require`, Go `import`). Ship Python import-graph first; document other languages as chunk-only until their import extractor exists.
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
-|---|---|---|---|
-| 0 — Setup | Pick 5 test repos (varying size/language), get `tree-sitter` parsing working on at least Python + one other language | Chunker produces function/class-level chunks with correct file/line metadata on all 5 repos | 3–4 days |
-| 1 — Indexing | Embed chunks into Chroma, build the import graph | Indexing a ~500-file repo completes in <5 min | 3–4 days |
-| 2 — Q&A Agent | Retrieval + citation-grounded answering | Citations verified to point at real file/line ranges (code-checked) on a test set | 4–5 days |
-| 3 — README + Architecture Diagram | Generate both from the index | Generated README correctly states the actual entry point/dependencies on all 5 test repos (manually verified) | 4–5 days |
-| 4 — Issue-Finder | TODO/gap scanning + ranking | Produces a plausible "first 5 issues" list a real contributor could act on, for all 5 test repos | 3–4 days |
-| 5 — Eval | 50-question eval set (10 per repo × 5 repos) | Accuracy and citation-correctness numbers from §6 committed to README | 4–5 days |
-| 6 — Deploy + Polish | Simple web UI (paste a repo URL, get results), Docker, README | Live demo works against a repo the user pastes in, not just your 5 pre-indexed ones | 3–4 days |
+| Phase | Goal | Definition of Done | Tests | Est. |
+|---|---|---|---|---|
+| 0 — Setup | 5 test repos; tree-sitter on Python + one other | Chunker emits function/class chunks w/ correct line metadata on all 5 | line-range accuracy test | 3–4 d |
+| 1 — Indexing | Hybrid index + Python import graph; oversized-node split | ~500-file repo indexes in <5 min | index-time benchmark | 3–4 d |
+| 2 — Q&A | Retrieval + citation verification | Citations code-checked to real file:line on a test set | citation-existence test | 4–5 d |
+| 3 — README + Diagram | Both from index + import graph, clustered | README states real entry point/deps on all 5 | manual verify | 4–5 d |
+| 4 — Issue-Finder | TODO/gap scan + ranked scoped issues | Plausible actionable "first 5" per repo | — | 3–4 d |
+| 5 — Eval | 50-question set (10/repo) | Accuracy + citation-correctness in README | eval harness | 4–5 d |
+| 6 — Deploy + Polish | Paste-a-URL web UI (w/ index progress), Docker | Live run on a pasted, never-indexed repo | live held-out test | 3–4 d |
 
 **Total: ~4–5 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- 5 public GitHub repos of varying size/language for the eval set (mix languages if using `tree-sitter`, or stick to Python-only for a smaller/faster build using Python's own `ast` module).
-- LLM provider budget: indexing is cheap (embeddings only); Q&A/README/architecture/issue generation calls are the main cost, budgeted at <$1/repo per §1.
-- No external API beyond `git clone` and the LLM provider.
+- 5 public repos of varying size/language (one small Python lib, one ~500-file web app, one second-language repo if multi-lang, one with a good README as a sanity check, one **held-out** repo you've never seen).
+- LLM budget: indexing cheap (embeddings); generation is the cost, <$1/repo.
+- No API beyond `git clone` + LLM.
 
 ## 6. Eval Strategy
 
-- **Q&A accuracy + citation correctness:** 10 hand-written questions per test repo (50 total), each with a known-correct file/line answer; score both "is the answer substantively correct" (LLM-judge or manual) and "does the citation point to a real file/line that actually supports the answer" (code-checked: does the cited file:line exist and does its content plausibly relate to the claim).
-- **README correctness:** manually verify the generated README's stated entry point and top dependencies against the real repo for all 5 test repos — this is a small enough check to do by hand and is more convincing than an automated proxy metric.
-- **Issue-list plausibility:** manually review the "first 5 issues" list per repo for whether a new contributor could actually act on it (not vague, not something already fixed) — report a pass/fail count, e.g. "22/25 suggested issues were actionable."
+- **Q&A accuracy + citation correctness:** 10 hand-written questions/repo, categorized (entry-point, data-flow, "where is X handled", "why this design"), each with a known file/line. Score correctness (LLM-judge/manual) **and** citation-exists (code). Report both.
+- **README correctness:** manually verify stated entry point + top deps on all 5 (small enough to do by hand, more convincing than a proxy metric).
+- **Issue plausibility:** manually review "first 5" per repo for actionability; report a pass count (e.g., "22/25 actionable").
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **Naive chunking undermines the entire pitch.** If you fall back to fixed-size text splitting "to save time," you lose the ability to cite exact functions/classes, which is this project's core differentiator versus a generic RAG-over-text-files project.
-- **Citations that look plausible but are wrong.** An LLM can produce a confident-looking `file.py:42` that doesn't actually contain what it claims — always verify citations against the actual indexed chunk, never let the LLM freely invent a line number.
-- **Import-graph analysis breaking on dynamic imports/monorepos.** Static analysis has real limits (dynamic `importlib` calls, complex build systems); document this as a known limitation rather than silently producing a wrong diagram.
-- **README generation that just restates file names.** A generated README that says "this repo has a `utils.py` and a `main.py`" without synthesizing *purpose* isn't useful — the retrieval step needs to actually pull docstrings/comments/existing docs, not just file listings.
-- **Demo-ability tunnel vision.** It's tempting to hardcode assumptions that work for your 5 test repos but break on an interviewer's live repo — explicitly test on at least one repo you've never seen before you ship, since "run it live on their repo" is the whole point.
+- **Naive chunking undermines the pitch** — fixed-size splitting kills citation accuracy; if you fall back temporarily, treat it as a known gap.
+- **Plausible-but-wrong citations** — always verify against the actual chunk; never let the LLM invent a line number.
+- **Import graph breaks on dynamic imports/monorepos** — document the limitation rather than emitting a wrong diagram.
+- **README that restates filenames** — pull docstrings/comments/existing docs via fixed probe queries, not a file listing.
+- **Demo tunnel-vision** — test on an unseen repo before shipping; "run it live" is the whole point.
 
 ## 8. Implementation Notes for the Executing Model
 
-- Build the citation-verification check as a hard code assertion in the Q&A agent's output path (does `file_path:start_line-end_line` exist in the current index) — reject/regenerate an answer that fails this check rather than shipping an unverifiable citation.
-- Start with Python-only via the standard library `ast` module for Phase 0 if multi-language `tree-sitter` setup is taking too long — you can extend language support later; don't let parser breadth block getting the pipeline working end-to-end first.
-- Cache the cloned repo and its index — re-cloning and re-indexing on every question is wasteful; index once per repo, serve many questions against the same index.
-- For the "first 5 issues" list, bias toward concrete, scoped suggestions ("add a docstring to `parse_config()` in `config.py:12`, which is public but undocumented") over vague ones ("improve test coverage") — specificity is what makes it demo-able.
-- When testing live against an unfamiliar repo, set a reasonable file-count/size ceiling (e.g., skip indexing generated/vendored directories like `node_modules`, `dist`, `.venv`) — a naive indexer that tries to parse a repo's entire dependency tree will time out and look broken in a live demo.
+- Citation verification is a **hard code assertion** in the Q&A output path — reject/regenerate an answer whose citation doesn't resolve.
+- Start Python-only via `ast` if multi-language `tree-sitter` setup drags — extend later; don't let parser breadth block an end-to-end pipeline.
+- Cache the clone + index per repo; index once, serve many questions.
+- **README probe queries (fixed list):** "entry point / main", "installation / setup", "dependencies (parse `requirements.txt`/`package.json`/`pyproject.toml` directly)", "high-level purpose (top-level README/docstring)", "how to run tests". Feed retrieved results, not raw file lists.
+- **Diagram simplification:** roll the import graph up to module/package level; if >~25 nodes, show the top-N by in-degree + an "others" cluster.
+- Issue suggestions must be **scoped** ("add a docstring to `parse_config()` in `config.py:12`, which is public but undocumented"), never vague ("improve tests").
+- Exclude vendored/generated dirs (`node_modules`, `dist`, `.venv`, `build`) — a naive indexer times out on them in a live demo.
 
 ## 9. Definition of Done
 
-- [ ] AST-aware chunking verified on at least 2 languages (or clearly scoped to Python with that limitation documented).
-- [ ] 50-question eval set run with accuracy + citation-correctness numbers in the README.
-- [ ] README/architecture-diagram/issue-list generation manually verified correct on all 5 test repos.
-- [ ] Live demo successfully run against a repo not in the original 5 (tested at least once before considering this done).
+- [ ] AST-aware chunking verified on ≥2 languages (or scoped to Python w/ that documented).
+- [ ] 50-question eval with accuracy + citation-correctness in README.
+- [ ] README/diagram/issue-list manually verified on all 5 repos.
+- [ ] Live run on a repo not in the original 5 (tested before "done").
 - [ ] Dockerized, deployed, README complete.

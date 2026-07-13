@@ -2,58 +2,70 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| Abstract syntax trees (ASTs), at a conceptual level | Your chunker's whole value proposition is parsing by AST boundary, not text | Python's own `ast` module docs, or `tree-sitter`'s "Playground" to see parse trees visually |
-| RAG fundamentals (chunking, embedding, retrieval) | Same underlying mechanics as Project 01, applied to code instead of prose | Reuse what you learned in Project 01/prerequisites there |
-| Static analysis basics (what an import graph is) | The architecture-diagram generator is built on this | Any short primer on Python/JS module dependency graphs |
+| Abstract syntax trees (conceptually) | Your chunker parses by AST boundary | Python `ast` module docs; the tree-sitter Playground to see parse trees |
+| RAG fundamentals (chunk/embed/retrieve) | Same mechanics, applied to code | Reuse Project 01's RAG prerequisite |
+| tree-sitter queries (S-expressions) | You walk the tree to find function/class nodes | tree-sitter docs → "Using Parsers" and "Query syntax" |
+| Static analysis / import graphs | The diagram generator is built on this | Any primer on module dependency graphs |
 
 ## 2. Core Concepts Taught
 
 ### AST-aware chunking
-**What:** splitting source code into retrieval units aligned with its actual syntactic structure (a whole function, a whole class) rather than splitting every N characters/tokens regardless of what's in the middle.
-**Why it exists:** fixed-size splitting on code frequently cuts a function in half, separating a function's signature from its body, or splitting a class from its methods — this destroys both retrieval quality (the chunk doesn't make sense alone) and citation accuracy (you can't honestly cite "lines 40-60" if the function actually spans 35-72).
-**How it works:** parse the file into an AST (or use `tree-sitter`'s language grammars for multi-language support), walk the tree to find function/class/module-level nodes, and emit one chunk per node with its exact start/end line numbers as metadata.
-**Where it's used here:** the AST-Aware Chunker — the component that makes the whole project's citation-accuracy claim possible.
+**What.** Split code into retrieval units aligned with syntax (a whole function/class), not every N characters.
+**Why it exists.** Fixed-size splitting cuts a function in half — separating signature from body — destroying both retrieval quality (the chunk is meaningless alone) and citation accuracy (you can't honestly cite lines 40–60 of a function spanning 35–72).
+**How it works (mechanism).** Parse the file to an AST; with tree-sitter you run an **S-expression query** like `(function_definition) @fn` to capture function nodes across languages, then emit one chunk per node with its exact byte/line span. Oversized nodes (a huge class) get split by member, each keeping the parent symbol.
+**Where here.** The AST-Aware Chunker — the component the whole citation claim rests on.
+
+### Why code embeddings differ from prose embeddings
+**What.** Code retrieval needs identifier-exact matching that dense vectors alone under-serve.
+**Why it exists.** An identifier like `parse_config` is a rare token; a dense embedding may place two functions near each other semantically while the user actually wants the exact symbol. BM25 (term-frequency over tokens) nails exact-identifier lookups; dense nails conceptual ("how does auth work"). Fusing both (reciprocal-rank fusion) covers both query types.
+**Where here.** The hybrid retriever.
 
 ### Grounded citation (verify, don't trust)
-**What:** treating an LLM's claimed citation (e.g., "see `utils.py:42`") as unverified until checked against the actual indexed content, and rejecting/regenerating answers that fail verification.
-**Why it exists:** LLMs can produce syntactically plausible but factually wrong citations (a real-looking file path and line number that doesn't actually say what's claimed) — this is a subtler and more dangerous form of hallucination than an obviously wrong answer, because it looks trustworthy.
-**Where it's used here:** the hard code-level check in the Q&A Agent's output path (PLAN.md §8) — this is a deterministic software check, not something you ask the LLM to self-verify.
+**What.** Treat an LLM's citation as unverified until checked against the actual indexed chunk.
+**Why it exists.** LLMs produce plausible-but-wrong citations — a real-looking `utils.py:42` that doesn't say what's claimed. This is subtler than an obvious wrong answer because it looks trustworthy.
+**How it works.** Deterministic check: parse the citation, assert the `file:line` maps to a real chunk in the index; regenerate if not. That's software, not asking the LLM "are you sure".
+**Where here.** The hard assertion in the Q&A output path.
 
-### Static analysis as a complement to LLM reasoning
-**What:** using exact, deterministic program analysis (import graphs, TODO scanning) for facts that are exact, and reserving the LLM for synthesis/labeling/summarization on top of those facts.
-**Why it exists:** an LLM asked to "figure out the architecture" from raw text will sometimes hallucinate a relationship that doesn't exist in the actual code; a static import graph cannot be wrong about which modules import which — combining the two gives you accuracy (from static analysis) plus readability (from the LLM's labeling/diagramming).
-**Where it's used here:** the Architecture-Diagram Generator's two-stage design (static import graph, then LLM to label/simplify it into a mermaid diagram) and the Issue-Finder's TODO/gap heuristics.
+### Static analysis + LLM (exact facts + readable synthesis)
+**What.** Use deterministic program analysis for exact facts (import graph, TODO scan), the LLM for labeling/summary on top.
+**Why it exists.** An LLM asked to "figure out the architecture" hallucinates edges; a static import graph cannot be wrong about which module imports which. Combine: accuracy from analysis, readability from the LLM.
+**Where here.** The two-stage Architecture-Diagram Generator and the Issue-Finder heuristics.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | Working with AST/tree-sitter parsers | A genuinely differentiated skill versus "I chunked text every 500 tokens" |
-| 1 (Indexing) | Building a code-search index with rich metadata | Directly applicable to any "chat with your codebase" internal tool — a common enterprise ask |
-| 2 (Q&A) | Citation verification as a deterministic check, not an LLM courtesy | Teaches the general principle of "verify what you can verify in code, judge only what you can't" |
-| 3 (README+Diagram) | Combining static analysis with LLM synthesis | A pattern that generalizes far beyond this project — anywhere you have exact facts plus a need for a readable summary |
-| 4 (Issue-Finder) | Turning static heuristics into actionable, scoped suggestions | Product sense: the difference between "technically correct" output and output someone can actually use |
-| 5 (Eval) | Manual verification as a legitimate eval method at small scale | Not everything needs an LLM judge — sometimes checking 5 repos by hand is the right, honest choice |
-| 6 (Deploy) | Handling an unpredictable, live, user-supplied input (an arbitrary repo) robustly | The most realistic "will this survive contact with a real user" test in the whole portfolio |
+| 0 | AST/tree-sitter parsing | Differentiated vs. "I chunked every 500 tokens" |
+| 1 | Hybrid code-search index with metadata | Any "chat with your codebase" internal tool |
+| 2 | Citation verification as a deterministic check | "Verify what you can; judge only what you can't" |
+| 3 | Static analysis + LLM synthesis | Generalizes anywhere exact-facts + readable-summary meet |
+| 4 | Static heuristics → scoped suggestions | Product sense: usable vs. merely correct output |
+| 5 | Manual verification as legitimate at small scale | Not everything needs an LLM judge |
+| 6 | Robustness on live, unpredictable input | The most realistic "survives a real user" test |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **Falling back to fixed-size chunking "just to get something working."** This quietly abandons the project's entire differentiator; if you do this temporarily, treat it as a known gap, not a finished Phase 0.
-- **Trusting LLM-stated citations without verification.** The most common way this project fails a rigorous eval — an unverified citation that looks right but points to the wrong lines.
-- **Asking the LLM to infer the whole architecture from text alone.** Wastes the fact that you have exact import-graph data available; use static analysis for what's exact.
-- **Ignoring vendored/generated directories.** Indexing `node_modules` or `.venv` bloats your index, slows indexing past the 5-minute target, and produces noisy, low-value chunks.
-- **Testing only on repos you've already seen.** The real test of "run this on the interviewer's repo" is running it on a repo you've never indexed before — do this before you consider the project done, not for the first time during an actual interview.
+- **Fixed-size fallback "just to ship."** Abandons the differentiator; treat as a known gap.
+- **Trusting LLM citations.** The most common rigorous-eval failure.
+- **LLM-inferred architecture.** Wastes the exact import-graph data.
+- **Ignoring vendored dirs.** Bloats the index and times out live demos.
+- **Testing only seen repos.** Run on an unseen one before "done".
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (AST-aware chunking):** What specifically goes wrong — for both retrieval quality and citation accuracy — if you split a 40-line function into two 20-line chunks at an arbitrary character boundary?
+**Q1 (AST chunking).** What goes wrong — retrieval and citation — if you split a 40-line function at an arbitrary character boundary?
+**A1.** Retrieval: each half lacks context (signature without body, or body without signature), so neither chunk is a good standalone answer. Citation: you'd cite a line range that doesn't correspond to a complete semantic unit, so "see lines 40–60" misrepresents where the function actually is.
 
-**After §2 (Grounded citation):** Why is verifying a citation in code more reliable than asking the LLM "are you sure about that citation?" What's the difference in what's actually being checked?
+**Q2 (Grounded citation).** Why is code-verifying a citation more reliable than asking the LLM "are you sure"?
+**A2.** Asking the LLM re-queries the same fallible model that produced the citation — it can be confidently wrong twice. Code checks an external fact (does this file:line exist in the index and map to a real chunk), which is deterministic and can't be talked into a wrong answer.
 
-**After §2 (Static analysis + LLM):** Give an example fact about a codebase's architecture that a static import graph can tell you with certainty, and one that it fundamentally cannot (and needs an LLM or a human to reason about instead).
+**Q3 (Static + LLM).** Give one architecture fact a static import graph tells you with certainty and one it can't.
+**A3.** Certain: module A imports module B (it's in the source). Cannot: *why* the design is layered that way, or runtime relationships via dynamic dispatch/dependency injection/`importlib` — those need an LLM or a human to reason about.
 
-**After Phase 4 (Issue-Finder):** What makes a suggested "good first issue" actionable versus vague? Rewrite a vague suggestion ("improve error handling") into a scoped one using this project's approach.
+**Q4 (Issue-Finder).** What makes a "good first issue" actionable vs. vague? Rewrite "improve error handling."
+**A4.** Actionable = specific location + concrete change. Rewrite: "wrap the `open()` call in `loader.py:34` in a try/except and raise a `ConfigError` with the file path, since a missing config currently crashes with a bare `FileNotFoundError`."
 
-**After Phase 6 (Deploy):** You run the agent live on a repo you've never seen and it times out during indexing. What are the first two things you'd check, based on the risks listed in this plan?
+**Q5 (Deploy).** It times out indexing an unseen repo. First two things to check?
+**A5.** (1) Is it trying to index vendored/generated dirs (`node_modules`, `.venv`)? Add exclusions. (2) Is there an oversized file/monorepo blowing the file-count/size ceiling? Apply the size cap and skip binary/generated files.

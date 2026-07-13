@@ -1,41 +1,45 @@
 # PLAN.md — Red-Team vs Blue-Team Agent Arena
 
-**Scope discipline:** this project is strictly a defensive-research / CTF-lab exercise against an intentionally vulnerable, isolated target application. All attacker-crew actions are scoped to that sandboxed target only. Nothing built here is a general-purpose intrusion tool, and none of it should ever be pointed at a system you don't own and haven't deliberately set up as a vulnerable lab.
+**Scope discipline (read first).** This is strictly a defensive-research / CTF-lab exercise against an intentionally vulnerable, isolated target (OWASP Juice Shop). All attacker-crew actions are scoped to that sandboxed target only, from a **fixed, pre-approved probe library** — the LLM never free-generates exploit payloads, it only selects and sequences from the library. Nothing here is a general-purpose intrusion tool, and none of it should ever be pointed at a system you don't own and haven't deliberately set up as a vulnerable lab.
 
 ## 1. Objective & Success Criteria
 
-Build two agent crews in a sandboxed, isolated lab: an attacker crew that probes a deliberately vulnerable application (OWASP Juice Shop) while a defender crew watches logs and applies fixes, refereed by a finite-state-machine (FSM) that enforces turn order and scores rounds. The deliverable is a defensive-research writeup: what classes of vulnerability the attacker crew found, how fast the defender crew detected and patched them, framed entirely around evaluation and defense.
+Two agent crews in a sandboxed, isolated lab: an attacker crew that probes Juice Shop from a fixed challenge set while a defender crew watches logs and proposes fixes, refereed by a finite-state-machine (FSM) that enforces turn order and scores rounds. Deliverable: a defensive-research writeup — which vulnerability classes were found, how fast the defender detected and proposed a patch — framed around evaluation and defense.
 
-| Metric | Target |
-|---|---|
-| Known Juice Shop challenges the attacker crew successfully identifies (out of a fixed subset you pick, e.g. 15 "easy/medium" challenges) | ≥50% |
-| Defender crew mean time-to-detect (from attack log entry to defender flagging it) | reported, not gamed — the number itself is the point |
-| Defender crew mean time-to-patch (from detection to a corrective action being proposed) | reported |
-| FSM referee correctly enforces turn order with zero out-of-turn actions | 100% (code-checked) |
-| Lab isolation verified (target has no route to any real network) | verified before every run, not just once |
+| Metric | Target | How measured |
+|---|---|---|
+| Fixed ~15-challenge subset the attacker crew triggers | ≥50% | Juice Shop's own score-board challenge status |
+| Defender mean time-to-detect (MTTD) | reported, not gamed | log-entry timestamp → defender flag timestamp |
+| Defender mean time-to-patch-proposal (MTTP) | reported | detect timestamp → proposal timestamp |
+| FSM enforces turn order, zero out-of-turn actions | 100% | code-checked, deliberate out-of-turn test |
+| Lab isolation (no route out) | verified before **every** run | `docker network inspect` + egress test |
 
 ## 2. Architecture
 
 ```mermaid
 flowchart TD
-    REF["FSM Referee (enforces turn order, scores rounds)"] -->|attacker turn| ATK[Attacker Crew]
+    REF["FSM Referee (code, not LLM)"] -->|attacker turn| ATK[Attacker Crew]
     REF -->|defender turn| DEF[Defender Crew]
-    ATK -->|probe/exploit attempt| TGT["OWASP Juice Shop (isolated, no external network)"]
+    ATK -->|selected probe from fixed library| TGT["Juice Shop (isolated, no egress)"]
     TGT -->|logs| DEF
     DEF -->|detect + patch proposal| REF
     ATK --> REF
-    REF --> SCORE[(Scorecard: vulns found, TTD, TTP, per round)]
+    REF --> SCORE[(Scorecard: vulns, MTTD, MTTP, per round)]
 ```
 
 ### Agent roster
 
-| Agent/Crew member | Role | Tools | Reads | Writes |
+| Member | Role | Tools | Reads | Writes |
 |---|---|---|---|---|
-| FSM Referee | Enforces which crew acts each turn, tracks round state, scores outcomes | AutoGen FSM group-chat transition graph (code, not LLM-decided) | round state | `current_turn`, `scorecard` |
-| Attacker: Recon Agent | Enumerates the target's visible attack surface (endpoints, forms, known Juice Shop challenge categories) | HTTP client scoped to the isolated target only | target responses | `recon_findings` |
-| Attacker: Exploit Agent | Attempts a specific known vulnerability class (e.g. SQL injection on a login form) from a fixed, pre-approved challenge list | HTTP client, same scoping | `recon_findings` | `exploit_attempt`, `exploit_result` |
-| Defender: Log-Analysis Agent | Watches the target's request/error logs for suspicious patterns | log-tailing tool scoped to the target's own logs | target logs | `detected_incidents` |
-| Defender: Patch-Proposal Agent | Given a detected incident, proposes a concrete fix (config change, input validation rule) | code/config diff generation (proposal only — see risk note on not auto-applying) | `detected_incidents` | `patch_proposal` |
+| FSM Referee | Enforces whose turn, tracks rounds, scores | AutoGen FSM transition graph (code) | round state | `current_turn`, `scorecard` |
+| Attacker: Recon | Enumerates the target's visible surface | HTTP client scoped to the isolated target | target responses | `recon_findings` |
+| Attacker: Exploit | **Selects** a probe from the fixed library for a challenge; never generates payloads | HTTP client (scoped), fixed probe library | `recon_findings` | `exploit_attempt`, `exploit_result` |
+| Defender: Log-Analysis | Watches request/error logs for suspicious patterns | log tailer (target's own logs) | target logs | `detected_incidents` |
+| Defender: Patch-Proposal | Proposes a fix (config/validation) — proposal only | diff/description generation | `detected_incidents` | `patch_proposal` |
+
+### The harness decision (Sonnet left this under-specified — it's the crux for safety + reproducibility)
+
+The exploit agent works from a **fixed probe library**: a checked-in mapping `{challenge_id: [pre-written HTTP request templates]}` covering the ~15 chosen challenges (e.g., a specific SQL-injection string on the login form). The LLM's only job is to **choose which challenge to attempt and in what order**, and to interpret the response. It never composes a novel payload. This bounds scope, keeps runs reproducible, and is the safety-critical design point.
 
 ### State schema (pseudocode)
 
@@ -43,7 +47,7 @@ flowchart TD
 class Round(TypedDict):
     round_number: int
     turn: Literal["attacker","defender"]
-    attacker_action: dict | None
+    attacker_action: dict | None      # {challenge_id, probe_id}
     target_response: dict | None
     defender_detection: dict | None
     defender_patch_proposal: dict | None
@@ -52,67 +56,75 @@ class Round(TypedDict):
 
 class ArenaState(TypedDict):
     rounds: list[Round]
-    challenge_list: list[str]        # fixed, pre-approved subset of Juice Shop challenges
-    scorecard: dict                   # aggregate stats across all rounds
+    challenge_list: list[str]         # the fixed ~15, by Juice Shop challenge name
+    scorecard: dict
 ```
 
-**Communication pattern:** AutoGen's finite-state-machine group-chat transition graph — the referee is not an LLM making a judgment call about whose turn it is, it's a literal state machine (`allowed_transitions` dict) that makes out-of-turn action structurally impossible, which is the entire point of using the FSM pattern here instead of a free-form group chat.
+### Detection starter rules + metric definitions (Sonnet left both vague)
+
+- **Detection rules (starter set over Juice Shop request logs):** SQL-injection signatures (`' OR 1=1`, `UNION SELECT`), XSS markers (`<script>`), repeated 401/403 bursts (brute force), access to admin paths, anomalous parameter lengths. The log-analysis agent flags on these.
+- **MTTD:** wall-clock from the timestamp the malicious request appears in the target log to the timestamp the defender writes a `detected_incidents` entry for it. **MTTP:** from that detection to the `patch_proposal` timestamp. Use one monotonic clock source for all events.
+
+**Communication pattern.** AutoGen's **FSM-constrained group chat** — the referee is a literal state machine (an `allowed_transitions` dict), not an LLM choosing who speaks. Out-of-turn action is structurally impossible. That is the entire reason for the FSM pattern here over a free-form group chat.
 
 ## 3. Tech Stack
 
-| Choice | Why | Rejected alternative |
+| Choice | Why | Rejected |
 |---|---|---|
-| AutoGen with FSM-constrained group chat | Purpose-built for exactly this "enforce a strict speaker/turn order" requirement | Free-form AutoGen group chat with an LLM "choosing" the next speaker — reintroduces the risk of an agent acting out of turn, which matters more here than in a normal chatbot |
-| OWASP Juice Shop (Docker container) as the target | A deliberately vulnerable, well-documented, purpose-built training application with known, cataloged challenges — exactly designed for this use case | A real production app, even a toy one you wrote — no fixed catalog of "known" vulnerabilities to score against, and higher risk of an undocumented, genuinely dangerous flaw |
-| Fully isolated Docker network (no route out) for the target | Non-negotiable safety requirement — the attacker crew must be structurally unable to reach anything outside the lab | Running the target on the host network "just for the demo" — this is exactly the shortcut that turns a safe lab into a real incident |
-| Patch proposals only (never auto-applied) by the Defender crew | Keeps a human in the loop for any actual system change, consistent with the HITL principle used elsewhere in this portfolio | Auto-applying patches — even in a sandbox, this teaches the wrong habit for a security-adjacent project |
+| AutoGen FSM-constrained group chat | Purpose-built strict turn-order enforcement | Free-form group chat w/ LLM speaker selection — reintroduces out-of-turn risk |
+| OWASP Juice Shop (Docker) | Deliberately vulnerable, cataloged challenges | A real/toy app — no fixed known-vuln catalog; higher risk |
+| Fully isolated Docker network (`--internal`) | Non-negotiable: attacker crew cannot reach anything outside the lab | Host network "for the demo" — turns a safe lab into a real incident |
+| Fixed probe library, LLM selects only | Bounds scope, reproducible, safe | LLM-generated payloads — scope creep toward an offensive tool |
+| Patch proposals only, never auto-applied | HITL, consistent with the portfolio | Auto-apply — teaches an unsafe habit |
+
+**AutoGen version note.** The FSM group-chat mechanism differs between AutoGen **0.2** (`GroupChat` + `allowed_or_disallowed_speaker_transitions`) and **0.4+** (the rewritten `autogen-agentchat`, `GraphFlow`). Decision: build on whichever you pin, but **pin explicitly** and mirror that version's transition API — do not mix tutorials across the 0.2/0.4 break (the cited notebook is 0.2/legacy).
 
 ## 4. Phase-by-Phase Build Plan
 
-| Phase | Goal | Definition of Done | Est. time |
+| Phase | Goal | Definition of Done | Est. |
 |---|---|---|---|
-| 0 — Lab Setup | Juice Shop in an isolated Docker network, verified no outbound route | `docker network inspect` confirms isolation; a test `curl` to an external host from inside the target's network namespace fails | 2–3 days |
-| 1 — FSM Referee | AutoGen FSM group chat skeleton with attacker/defender turn enforcement | An out-of-turn action attempt is rejected by the state machine, verified with a deliberate test | 3–4 days |
-| 2 — Attacker Crew | Recon + Exploit agents against a fixed subset of ~15 known Juice Shop challenges | Attacker crew successfully triggers ≥50% of the chosen challenge subset over several runs | 5–6 days |
-| 3 — Defender Crew | Log-analysis + patch-proposal agents | Defender crew detects a majority of attacker actions within the same session and produces a plausible patch proposal for each | 5–6 days |
-| 4 — Scoring + Eval | Full round-by-round scorecard: vulns found, time-to-detect, time-to-patch | Scorecard generated across ≥5 full arena runs, aggregated and reported | 3–4 days |
-| 5 — Writeup + Polish | README framed entirely around defensive research/evaluation, explicit scope/safety statement, Docker Compose for the whole lab | `docker compose up` reproduces the full isolated arena from a clean clone; README leads with the safety/scope statement | 3–4 days |
+| 0 — Lab Setup | Juice Shop in an isolated network; fixed probe library + 15 challenges chosen | `docker network inspect` confirms isolation; an egress `curl` from the target's namespace **fails**; probe library checked in | 2–3 d |
+| 1 — FSM Referee | AutoGen FSM skeleton, attacker/defender turns | A deliberate out-of-turn action is rejected by the state machine | 3–4 d |
+| 2 — Attacker Crew | Recon + Exploit (library selection) vs. the 15 | ≥50% of the subset triggered across runs | 5–6 d |
+| 3 — Defender Crew | Log-analysis (starter rules) + patch-proposal | Detects a majority of attacker actions in-session, proposes a plausible patch each | 5–6 d |
+| 4 — Scoring | Round-by-round scorecard: vulns, MTTD, MTTP | Scorecard across ≥5 runs, aggregated | 3–4 d |
+| 5 — Writeup | README leads with scope/safety; results = defender metrics; full Compose lab | `docker compose up` reproduces the isolated arena | 3–4 d |
 
 **Total: ~4–5 weeks part-time.**
 
 ## 5. Data & API Requirements
 
-- OWASP Juice Shop (free, open-source, official Docker image) — the entire target application.
-- No external APIs required; this project should have zero outbound network dependency for the target side (only your own LLM calls for the agents need external network access, and those should be scoped to the agent-orchestration host, not the target's network namespace).
-- LLM budget: modest — a handful of short reasoning calls per round across ~5 evaluation runs.
+- OWASP Juice Shop (official Docker image `bkimminich/juice-shop`).
+- Zero outbound network for the target side; only the agent host needs LLM egress, scoped away from the target's namespace.
+- LLM budget: modest — short reasoning calls per round × ~5 runs.
 
 ## 6. Eval Strategy
 
-- **Coverage:** fixed list of ~15 known Juice Shop challenges (pick from its published challenge catalog, "easy" and "medium" difficulty) — report what fraction the attacker crew triggers across multiple runs, and which specific classes it consistently misses.
-- **Detection/response timing:** for every attacker action that the defender crew does detect, log time-to-detect and time-to-patch-proposal; report means and the distribution (not just an average, since a few slow outliers matter for a security narrative).
-- **FSM integrity:** a code-level test that deliberately tries to make an agent act out of turn and confirms the referee rejects it — this is the one thing in this project that must be verified by code, not by LLM judgment.
-- **Isolation verification:** re-run the network-isolation check (§4 Phase 0 DoD) before every recorded evaluation session, not just once at setup — configuration drift is a real risk over a multi-week build.
+- **Coverage:** the fixed ~15 challenges (from Juice Shop's published catalog, easy/medium); report fraction triggered and which classes are consistently missed.
+- **Timing:** MTTD and MTTP per detected action; report the **distribution**, not just the mean (outliers matter for a security narrative).
+- **FSM integrity:** a code test that tries to make an agent act out of turn and confirms rejection.
+- **Isolation:** re-run the egress test before **every** recorded session (config drift is real over weeks).
 
 ## 7. Risks & Where These Projects Usually Fail
 
-- **Scope creep toward a real offensive tool.** The instant this stops being "probe a designated, isolated training app" and starts being "a general web-app attack agent," it's a different (and much more dangerous) project — keep the challenge list fixed and the target fixed.
-- **Isolation that "should be fine" but isn't tested.** The single most important safety property in this project is the network boundary; assume it's broken until you've explicitly verified it, and re-verify periodically.
-- **Auto-applying patches.** Even in a sandbox, wiring the defender's patch proposals directly into the running target without a human approval step teaches an unsafe habit and isn't necessary to make the demo compelling.
-- **Framing drift in the writeup.** It's easy to accidentally write the README like an offensive tool showcase ("look what my agent can hack") rather than a defensive-research one ("here's what classes of vulnerability get caught fastest and slowest") — the second framing is both safer and more hireable for security-adjacent roles.
-- **FSM referee that's actually just an LLM being polite about turn order.** If turn enforcement is a suggestion in a prompt rather than a hard transition table in code, an agent can and eventually will act out of turn — verify this structurally, per §6.
+- **Scope creep toward an offensive tool** — the moment it stops being "fixed probes vs. one isolated app," it's a different, dangerous project. Keep the library and target fixed.
+- **Untested isolation** — assume it's broken until you've verified egress fails; re-verify periodically.
+- **Auto-applying patches** — even in a sandbox, teaches the wrong habit.
+- **Offensive framing drift** — lead with detection/response metrics, not "look what my agent hacked."
+- **FSM as prompt, not code** — if turn order is a system-prompt suggestion, an agent will eventually act out of turn; verify structurally.
 
 ## 8. Implementation Notes for the Executing Model
 
-- Set up the Docker network isolation *before* writing any agent code — this is a safety precondition, not a deployment nicety, and should block starting Phase 1 until verified.
-- Use AutoGen's FSM group-chat mechanism's actual transition-table API (a dict/graph of allowed next-speakers) rather than an LLM-mediated speaker-selection function — the whole point of the FSM pattern is removing the LLM from the turn-order decision.
-- Fix the challenge list to a small, pre-approved subset (~15) rather than letting the attacker crew freely explore Juice Shop's entire challenge catalog — this bounds scope, keeps evaluation tractable, and makes results reproducible across runs.
-- The Patch-Proposal Agent should output a diff/description, never execute a change against the running target directly — keep the loop open for a human to review, consistent with this portfolio's HITL principle.
-- When writing the README, lead with an explicit "Scope and Safety" section before any results — this is both the responsible thing to do and, for hiring purposes, exactly the signal a security-adjacent interviewer wants to see.
+- Set up isolation **before** any agent code — it blocks Phase 1 until the egress test fails.
+- Use AutoGen's actual transition-table API (a dict/graph of allowed next-speakers) for the pinned version — the point of the FSM is removing the LLM from the turn decision.
+- The probe library is checked-in data; the exploit agent selects a `probe_id`, never composes a request string.
+- Patch-Proposal outputs a diff/description; never execute a change against the running target.
+- README leads with "Scope and Safety" before any result — responsible, and exactly the signal a security interviewer wants.
 
 ## 9. Definition of Done
 
-- [ ] Isolated lab verified with no outbound network route from the target, re-checked before evaluation runs.
-- [ ] FSM referee's turn-order enforcement verified with a deliberate out-of-turn test.
-- [ ] ≥5 full arena runs against the fixed ~15-challenge subset, scorecard aggregated.
-- [ ] Patch proposals are human-reviewable only, never auto-applied.
-- [ ] README leads with an explicit scope/safety statement and frames results around defensive evaluation.
+- [ ] Isolated lab verified (egress fails), re-checked before eval runs.
+- [ ] FSM turn-order enforcement verified with a deliberate out-of-turn test.
+- [ ] ≥5 arena runs vs. the fixed ~15, scorecard aggregated (coverage, MTTD, MTTP distributions).
+- [ ] Patch proposals human-reviewable only, never auto-applied.
+- [ ] README leads with scope/safety and frames results around defensive evaluation.

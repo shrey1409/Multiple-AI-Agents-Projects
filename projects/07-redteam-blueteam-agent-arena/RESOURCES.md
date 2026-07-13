@@ -1,49 +1,44 @@
 # RESOURCES.md — Red-Team vs Blue-Team Agent Arena
 
-Checked 2026-07-13. ✅ CONFIRMED WORKING · ⚠️ STALE/RESTRUCTURED (with recovery instructions).
+Paths verified 2026-07-13 against fresh clones. ✅ = confirmed.
 
 ## 1. What to clone / download
 
-### OWASP Juice Shop (the target application)
-
+### OWASP Juice Shop (the target)
 ```bash
-git clone --depth 1 https://github.com/juice-shop/juice-shop.git /tmp/ref-juice-shop
-# Note: the project moved from the original bkimminich/juice-shop personal repo to the
-# juice-shop org. Use the org URL above — the old personal-account URL 404s.
-docker pull bkimminich/juice-shop   # official Docker image name is unchanged
+git clone --depth 1 https://github.com/juice-shop/juice-shop.git /tmp/ref-juice-shop   # ✅ (org repo)
+docker pull bkimminich/juice-shop    # Docker Hub image name is unchanged
 ```
-Status: ✅ CONFIRMED WORKING at `juice-shop/juice-shop` (the personal-account URL `bkimminich/juice-shop` 404s as a *git repo* even though it's still the correct **Docker Hub image name** — don't confuse the two). Run it via Docker with an explicit internal-only network per PLAN.md §4 Phase 0 — never on the host's default bridge network.
+The project moved from the personal `bkimminich/juice-shop` **git** repo (404s now) to the `juice-shop` org — but the **Docker Hub image** is still `bkimminich/juice-shop`. Don't confuse the two. Run it with an explicit `--internal` network (PLAN §0), never on the host bridge.
 
-### AutoGen FSM group-chat notebook (Task Solving via Graph Transition Paths)
-
+### AutoGen FSM group-chat notebook (read-only, legacy)
 ```bash
-curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_groupchat_finite_state_machine.ipynb
+curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentchat_groupchat_finite_state_machine.ipynb   # ✅ 200
 ```
-Status: ✅ CONFIRMED WORKING. This is your primary reference for the FSM Referee — study its `allowed_transitions` graph construction closely, since this is the mechanism that must be a hard code-level constraint, not an LLM suggestion (see PLAN.md §7/§8).
+⚠️ **This is AutoGen 0.2** (legacy; repo in maintenance mode). Study its `allowed_or_disallowed_speaker_transitions` graph construction — the mechanism that must be a hard code-level constraint. **If you build on AutoGen 0.4+ (`autogen-agentchat`), the API is different (`GraphFlow`)** — pin one version and don't mix.
 
-### Decepticon (read-only pattern reference, not reused code)
-
+### Decepticon (read-only pattern reference)
 ```bash
-git clone --depth 1 https://github.com/PurpleAILAB/Decepticon.git /tmp/ref-decepticon
+git clone --depth 1 https://github.com/PurpleAILAB/Decepticon.git /tmp/ref-decepticon   # ✅
 ```
-Status: ✅ CONFIRMED WORKING (README returned HTTP 200). Read for its multi-agent red-team crew structure and safety framing — do not import its code directly; this project's scope is deliberately narrower (a fixed ~15-challenge subset against one designated isolated target) and should stay that way.
+Multi-agent red-team crew structure + safety framing. Do not import; this project is deliberately narrower (fixed ~15-challenge subset, one isolated target).
 
-### NVISOsecurity cyber-security-llm-agents (read-only pattern reference)
-
+### NVISO cyber-security-llm-agents (read-only)
 ```bash
-git clone --depth 1 https://github.com/NVISOsecurity/cyber-security-llm-agents.git /tmp/ref-nviso
+git clone --depth 1 https://github.com/NVISOsecurity/cyber-security-llm-agents.git /tmp/ref-nviso   # ✅ (repo exists)
 ```
-Status: repo confirmed to exist (main branch), though its raw `README.md` path returned 404 during planning — check the exact README filename/casing once cloned. Built on AutoGen, focused on automating cybersecurity tasks; read-only reference for agent/task structuring ideas, not for direct reuse.
+Built on AutoGen, security-task automation. Read-only for agent/task structuring; check the README filename/casing once cloned.
+
+Both Decepticon and NVISO are also listed in the 500-AI-Agents-Projects README's Cybersecurity table (confirmed).
 
 ## 2. Mapping: reference → project part
 
-| Reference | Reuse as-is / Adapt / Read-only | Feeds PLAN.md phase |
-|---|---|---|
-| OWASP Juice Shop | Reuse as-is — this is your fixed target application and challenge catalog | Phase 0, 2, 4 |
-| AutoGen FSM group-chat notebook | Adapt — reuse the transition-table construction directly for your Referee; extend it with your scoring/timing state | Phase 1 |
-| Decepticon | Read-only — crew structure and safety-framing inspiration only | Phase 2, 5 (writeup framing) |
-| NVISOsecurity cyber-security-llm-agents | Read-only — general agent/task organization ideas for a security-automation context | Phase 3 |
+| Reference | Verified path | Reuse/Adapt/Read-only | Feeds phase |
+|---|---|---|---|
+| OWASP Juice Shop | `juice-shop/juice-shop` + image `bkimminich/juice-shop` | Reuse — target + challenge catalog | 0, 2, 4 |
+| AutoGen FSM notebook (0.2) | `notebook/agentchat_groupchat_finite_state_machine.ipynb` | Adapt — transition-table construction (mind the 0.2/0.4 split) | 1 |
+| Decepticon | repo root | Read-only — crew structure + safety framing | 2, 5 |
+| NVISO cyber-security-llm-agents | repo root | Read-only — task organization | 3 |
 
-## 3. Juice Shop challenge catalog (data, not code)
-
-Juice Shop ships an official, documented list of challenges by difficulty (score board) — pick your fixed ~15 "easy/medium" subset from its own published challenge catalog (visible in the running app's `/#/score-board` or its docs) rather than inventing your own vulnerability list, so your coverage metric is comparable to a well-known, externally-verifiable standard.
+## 3. Challenge catalog (data)
+Pick your fixed ~15 easy/medium challenges from Juice Shop's own published challenge catalog (the running app's `/#/score-board`), so your coverage metric is comparable to a well-known external standard. Record the exact challenge names in `challenge_list`.

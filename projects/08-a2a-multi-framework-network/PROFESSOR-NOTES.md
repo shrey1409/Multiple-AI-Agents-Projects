@@ -2,60 +2,66 @@
 
 ## 1. Prerequisites
 
-| Concept | Why you need it first | Best specific resource |
+| Concept | Why | Specific resource |
 |---|---|---|
-| Project 01 built (or at least its worker designs understood) | You're re-implementing 3 of its specialists in new frameworks | Your own Project 01 |
-| Basic CrewAI (agents, tasks, crews) | You're building one specialist in CrewAI | CrewAI's own quickstart docs |
-| Basic Agno (agents, tools) | You're building one specialist in Agno | Agno's own quickstart docs |
-| MCP fundamentals (same as Project 04) | Every specialist here also exposes an internal MCP tool | Reuse what you learned building Project 04, or read it first if you haven't |
-| What "service discovery" means in distributed systems | The Coordinator's whole design rests on this idea, generalized to agents | Any short primer on service discovery patterns (even outside AI — the concept is the same) |
+| Project 01 built (or its worker designs understood) | You re-implement 3 of its specialists | Your own Project 01 |
+| Basic CrewAI (agents/tasks/crews) | You build one specialist in CrewAI | CrewAI quickstart docs |
+| Basic Agno (agents/tools) | You build one specialist in Agno | Agno quickstart docs |
+| MCP fundamentals | Every specialist exposes an internal MCP tool | Reuse Project 04 |
+| Service discovery (distributed systems) | The coordinator's design rests on it | Any service-discovery primer; the concept is the same outside AI |
+| JSON-RPC 2.0 | A2A interactions are JSON-RPC | JSON-RPC 2.0 spec summary |
 
 ## 2. Core Concepts Taught
 
 ### Agent-to-Agent (A2A) protocol
-**What:** an open protocol (from Google) for agents built on *different* frameworks or by *different* teams to discover each other's capabilities and delegate tasks, without either side needing to know the other's internal implementation.
-**Why it exists:** MCP solves "how does an agent talk to a tool"; A2A solves the complementary problem of "how does one agent talk to another agent" — especially across organizational or framework boundaries, where you can't just import someone else's Python class. As agentic systems multiply, no single team builds every specialist agent in the same framework, so a common inter-agent protocol matters.
-**How it works:** each agent publishes an **agent card** — a small, structured self-description of its capabilities and how to reach it. A requesting agent (or coordinator) fetches the card, then sends a task request in the protocol's standard shape and receives a task response, entirely independent of what's inside the responding agent.
-**Where it's used here:** every specialist agent's A2A server wrapper, and the Coordinator's discovery-then-dispatch logic — the core subject of this whole project.
+**What.** An open protocol (originally Google, now under the Linux Foundation) for agents on *different* frameworks/teams to discover each other and delegate tasks without knowing internals.
+**Why it exists.** MCP solves agent→tool; A2A solves agent→agent, especially across framework/organizational boundaries where you can't just import someone's class.
+**How it works (mechanism).** Each agent publishes an **agent card** at `/.well-known/agent-card.json` (RFC 8615 well-known URI) describing its `skills`, `capabilities`, and `url`. A client fetches the card, then sends a `message/send` JSON-RPC request containing a `Message` (made of `Part`s); the server returns a `Task` that progresses through states `submitted → working → (input-required) → completed|failed`. The client can `tasks/get` to poll. All of this is independent of what's inside the responding agent.
+**Where here.** Every specialist's A2A server wrapper + the coordinator's discovery-then-dispatch.
 
 ### Framework-agnostic orchestration
-**What:** designing a coordinator/orchestrator that can call agents built in different frameworks interchangeably, because it only depends on the standard protocol boundary (A2A), never on framework-specific internals.
-**Why it exists:** real organizations don't standardize on one agent framework forever — teams pick different tools, acquire other teams' systems, or migrate frameworks over time. An orchestrator that can't survive a specialist being rebuilt in a different framework is brittle in exactly the way real production systems can't afford to be.
-**Where it's used here:** the Phase 5 "swap one specialist's framework, zero coordinator changes" proof — the single most important validation in this project.
+**What.** A coordinator that calls agents built in different frameworks interchangeably because it depends only on the A2A boundary.
+**Why it exists.** Real orgs don't standardize on one framework forever — teams differ, migrate, get acquired. An orchestrator that survives a specialist being rebuilt in another framework is what production actually needs.
+**Where here.** The Phase-5 swap-with-zero-coordinator-changes proof — the most important validation.
 
-### MCP and A2A used together
-**What:** using MCP for an agent's own tool access and A2A for that same agent's exposure to other agents, in the same system.
-**Why it exists:** these protocols solve adjacent but distinct problems and are commonly discussed together as "the 2026 agent protocol stack" — most portfolio projects use at most one; using both correctly, and being able to clearly explain which does what, is the specific signal this project is built to produce.
-**Where it's used here:** every specialist agent in this project's architecture diagram — MCP arrows going "down" to tools, A2A arrows going "sideways/up" to the coordinator.
+### MCP and A2A together
+**What.** MCP for an agent's own tool access; A2A for that agent's exposure to other agents — in one system.
+**Why it exists.** They solve adjacent-but-distinct problems and are the "2026 agent protocol stack." Using both correctly and explaining which does what is the specific signal this project produces.
+**Where here.** Every specialist: MCP arrows go "down" to tools, A2A arrows go "sideways" to the coordinator.
 
 ## 3. Phase-by-Phase Learning Outcomes
 
-| Phase | You learn | Why it matters for your career |
+| Phase | You learn | Career relevance |
 |---|---|---|
-| 0 (Setup) | Minimal A2A round-trip mechanics | De-risks the rest of the build by isolating protocol plumbing first |
-| 1 (LangGraph agent) | Wrapping an existing LangGraph agent for external A2A exposure | Reusable pattern for exposing any of your other portfolio projects' agents externally |
-| 2 (CrewAI agent) | A second framework's idioms, under real time pressure to keep it simple | Breadth signal — most candidates only ever show one framework |
-| 3 (Agno agent) | A third framework, plus MCP tool-wrapping inside it | Completes the "framework fluency" story |
-| 4 (Coordinator) | Discovery-based orchestration design | The actual architecture pattern behind "an agent marketplace/ecosystem," an increasingly real enterprise need |
-| 5 (Interop proof) | Proving an abstraction boundary holds by actually exercising it | A rare, concrete engineering-rigor signal — most projects claim modularity without ever testing it |
-| 6 (Polish) | Telling a protocol-literacy story clearly to a non-specialist reader | This project's pitch is subtle; the README has to do real explanatory work |
+| 0 | Minimal A2A round-trip | De-risks the build by isolating protocol plumbing |
+| 1 | Wrapping a LangGraph agent for external A2A | Reusable for exposing any portfolio agent externally |
+| 2 | A second framework under time pressure | Breadth signal — most candidates show one framework |
+| 3 | A third framework + MCP tool inside it | Completes the fluency story |
+| 4 | Discovery-based orchestration | The pattern behind an "agent marketplace/ecosystem" |
+| 5 | Proving an abstraction boundary by exercising it | A rare engineering-rigor signal |
+| 6 | Explaining protocol literacy to a non-specialist | This project's pitch is subtle; the README must do real work |
 
 ## 4. Common Misconceptions & Mistakes
 
-- **Confusing MCP and A2A.** MCP = agent-to-tool. A2A = agent-to-agent. Mixing these up out loud in an interview undercuts the exact credibility this project is meant to build — know the distinction cold.
-- **Building 3 frameworks that never really need to be separate services.** If everything runs in one process and could've been 3 plain functions, you've demonstrated framework syntax, not interoperability.
-- **Skipping the swap-and-verify step.** Claiming "this design would support swapping frameworks" without ever doing it is a much weaker claim than actually doing it once and documenting the diff.
-- **Hardcoding an endpoint "just to get the demo working" and forgetting to remove it.** This silently breaks the discovery-based design the whole project is supposed to demonstrate.
-- **Ignoring or hiding the latency cost of going over-the-wire.** Every real architecture decision has a tradeoff; hiding the number looks less credible than reporting and explaining it.
+- **Confusing MCP and A2A.** MCP = agent→tool; A2A = agent→agent. Know it cold.
+- **3 frameworks that never needed to be separate services.** Then you showed syntax, not interop.
+- **Skipping the swap-and-verify.** "Would support swapping" is far weaker than doing it once and diffing.
+- **Hardcoding an endpoint and forgetting it.** Silently breaks discovery.
+- **Hiding the latency cost.** Report and explain the tradeoff.
 
-## Understanding-check questions
+## 5. Understanding-check questions (with answer key)
 
-**After §2 (A2A protocol):** What problem does A2A solve that MCP does not? Could you build this project's Coordinator using only MCP? Why or why not?
+**Q1 (A2A).** What does A2A solve that MCP doesn't? Could you build the coordinator with only MCP?
+**A1.** A2A handles agent-to-agent task delegation across framework/org boundaries (discovery via agent cards, task lifecycle). MCP handles agent-to-tool access. You could technically expose an agent *as* an MCP tool, but you'd lose A2A's task lifecycle, agent-card capability discovery, and the peer semantics — MCP models "a tool the client drives," not "a peer agent you delegate a task to and poll."
 
-**After §2 (Framework-agnostic orchestration):** Why does the Coordinator's ability to work with a swapped-out specialist matter more than the specific frameworks you chose? What would you tell an interviewer who asks "why these 3 frameworks specifically"?
+**Q2 (Framework-agnostic).** Why does surviving a swapped specialist matter more than the specific frameworks? What do you tell an interviewer asking "why these 3"?
+**A2.** The value is the *boundary*, not the frameworks — production needs orchestration that outlives any one framework choice. To the interviewer: "The three are just to prove heterogeneity; the real result is that the coordinator didn't change when I swapped one, which is the property real systems need."
 
-**After §2 (MCP + A2A together):** Draw (in words) the two different arrows in this project's architecture — one for MCP, one for A2A. What's flowing over each, and between which parties?
+**Q3 (MCP + A2A).** Describe the two arrows in this architecture — what flows over each, between whom?
+**A3.** MCP arrow: from a specialist agent *down* to its tool (e.g., the market-data agent → its yfinance MCP tool), carrying tool calls/results. A2A arrow: from the coordinator *sideways* to a specialist agent, carrying a `Message`/`Task` (a delegated request and its result).
 
-**After Phase 4 (Coordinator):** What's one design decision in your Coordinator that would leak framework-specific knowledge if you weren't careful, and how did you avoid it?
+**Q4 (Coordinator).** Name one place framework-specific knowledge could leak and how you avoided it.
+**A4.** Response parsing: if the coordinator special-cased "if it's the CrewAI agent, read field X," it would leak. Avoided by having every specialist return the same A2A `Task`/`Message` shape, so the coordinator parses one uniform structure regardless of backing framework.
 
-**After Phase 5 (Interop proof):** You measured A2A overhead vs. an in-process call and it's 5x slower. Is that a problem with this design, or an expected and acceptable tradeoff? What would change your answer?
+**Q5 (Interop proof).** A2A overhead is 5× an in-process call. Problem or acceptable? What changes your answer?
+**A5.** Usually acceptable — you bought framework independence and network deployability with that latency, and the calls are I/O-bound anyway (LLM + external APIs dominate). It becomes a problem if the workload is latency-critical and high-QPS where the per-hop overhead dominates total time; then you'd co-locate or batch. The answer depends on the absolute latency budget, not the ratio alone.
