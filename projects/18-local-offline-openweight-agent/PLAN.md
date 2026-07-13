@@ -107,3 +107,17 @@ class LocalRunConfig(TypedDict):
 - [ ] Grammar-constrained structured output ≥90% valid; hosted-vs-local benchmark on the same eval set reported honestly.
 - [ ] Quantization quality/latency/VRAM curve reported; cost crossover derived.
 - [ ] Dockerized offline stack; README leads with the hosted-vs-local tradeoff table.
+
+## 10. Localization (India-first)
+
+**Deep-localized on motivation and models; every systems concept preserved.** Self-hosting, quantization, grammar-constrained decoding, and the hosted-vs-local benchmark are unchanged — but the *why* is especially strong in India: cost (₹ per query at scale matters more when serving price-sensitive users), **data residency / DPDP** (keep personal data on-prem, never send it to a foreign API), and **low/unreliable connectivity** (offline-capable agents for rural/edge deployments).
+
+**What changed (motivation, models, examples — not architecture):**
+- **Framing:** the hosted-vs-local trade-off analysis foregrounds **Indian drivers** — DPDP data-residency (a bank/hospital may be barred from sending PII to a US API), rupee cost at scale, and offline operation for low-connectivity regions.
+- **Models:** general open-weight models (Llama/Qwen/etc. via Ollama/llama.cpp/vLLM) **plus Indian-language open models** — **AI4Bharat** models and India-built LLMs (e.g. Sarvam, Krutrim families) — so a *local* agent can serve Hindi/Indic users without a foreign API. This pairs naturally with Project 17 (offline vernacular voice) and Project 02/11 (on-prem PII handling under DPDP).
+- **Port target:** the agent ported to local is Project 05 (SQL) as specified — unchanged — but a compelling India demo is porting Project 02's KYC pipeline to fully on-prem for DPDP compliance.
+- **Cost analysis:** reported in ₹ (hosted API ₹/query vs. amortized local GPU/CPU ₹/query).
+
+**What stayed global (unchanged):** the quantization/decoding/self-hosting curriculum, grammar-constrained structured output on small models, and the hosted-vs-local benchmark methodology. The systems-engineering learning is intact; the motivation and model choices are India-tuned.
+
+**Trade-off recorded:** Indian-language open models are younger and often weaker than frontier hosted models — which is exactly the honest trade-off this project teaches (you *measure* the local-vs-hosted quality gap rather than assuming it). That measurement, framed around real DPDP/cost/connectivity drivers, is a genuinely hireable India-market analysis.

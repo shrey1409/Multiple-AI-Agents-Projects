@@ -147,3 +147,11 @@ Backing: SQLite (durable across restarts).
 - [ ] Each server verified from a different MCP client.
 - [ ] ≥1 server on PyPI + submitted to the official MCP Registry with a `server.json`.
 - [ ] Each server has its own standalone README.
+
+## 10. Localization (India-first)
+
+**Mostly location-neutral; one optional India flavor.** MCP authoring, protocol compliance, cross-client verification, and publishing to the official registry carry no market assumptions and are unchanged.
+
+**Optional India flavor for Server 1 (the API-wrapper), no architecture change:** instead of a generic weather/geocoding API, wrap an **India-relevant public API** — e.g. **India Post pincode lookup** (free, no auth, returns post-office/district/state for a PIN), **data.gov.in** open datasets, or an IRCTC-style train-status API. Same authoring/error-handling/caching curriculum, a server that's actually useful in India and a nicer registry listing. Servers 2 (knowledge store) and 3 (task tracker) stay as-is.
+
+**What stayed global:** the authoring/publishing curriculum, transport, Inspector compliance, idempotency lessons.

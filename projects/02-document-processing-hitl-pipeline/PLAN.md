@@ -186,3 +186,19 @@ CREATE TABLE audit_log (
 - [ ] 500-doc eval with the §6 metrics table in the README.
 - [ ] Idempotency replay **and** concurrency tests pass.
 - [ ] Dockerized, deployed, README with diagram + approval-flow clip + decisions/failures.
+
+## 10. Localization (India-first)
+
+**Deep-localized** — this project becomes markedly more useful for Indian back-offices, and adds a genuinely important learning topic (the DPDP Act) **without removing any HITL/durable-execution content**.
+
+**What changed (document types, rules, regulatory context — not architecture):**
+- **Document types:** invoices → **GST tax invoices** (GSTIN, HSN/SAC codes, CGST/SGST/IGST split, place-of-supply, reverse-charge flag); claims → **Indian insurance claims** (IRDAI-regulated, policy/claim numbers, cashless vs reimbursement); contracts stay but add **KYC documents** (PAN, Aadhaar, bank proof) as a fourth type — the exact docs Indian fintechs (Razorpay, Zerodha onboarding, PhonePe merchant KYC) process at scale.
+- **Per-doc-type extraction schemas:** localized fields — `InvoiceFields` gains `gstin, hsn_sac, cgst, sgst, igst, place_of_supply`; new `KYCFields{pan, aadhaar_masked, name, dob, address}`.
+- **Business-rules catalog (deterministic, unchanged mechanism):** add India rules — `gstin_checksum_invalid` (GSTIN has a verifiable check digit — a great deterministic-rule example), `igst_cgst_sgst_mismatch` (tax split must reconcile to the total), `pan_format_invalid` (`[A-Z]{5}[0-9]{4}[A-Z]`), `high_value_over_2L` (₹2 lakh threshold, echoing PMLA reporting norms). These *strengthen* the "deterministic rules, not an LLM" lesson with checkable Indian formats.
+- **Regulatory context:** SEC/FDA framing → **SEBI/RBI/IRDAI/GSTN**; amounts in ₹ lakh/crore.
+
+**New learning topic — the DPDP Act 2023 (added, nothing removed):** KYC docs contain Aadhaar/PAN — **personal data** under India's Digital Personal Data Protection Act. This makes HITL and audit *more* important, not less: teach **data minimization** (store masked Aadhaar — last 4 digits — never the full number), **purpose limitation**, **consent/audit trail** (the `audit_log` now doubles as a DPDP processing record), and why the approval gate is also a compliance control. This is a real, hireable Indian-market skill (every regulated fintech needs it) layered *on top of* the durable-execution curriculum. Cross-reference Project 11's PII redaction for Aadhaar/PAN masking.
+
+**What stayed global (unchanged):** LangGraph `interrupt()` durable execution, idempotency, the deterministic rules engine, confidence-vs-risk routing, escalation, the Postgres audit log, the kill-mid-approval resume test — every architecture pattern and learning objective is intact. Synthetic data stays synthetic (never real Aadhaar/PAN — generate format-valid fakes, which the DPDP topic makes doubly important).
+
+**Trade-off recorded:** GST/KYC add domain complexity (checksum validation, masking) that slightly enlarges the extraction/rules surface — but it *reinforces* the deterministic-validation lesson rather than diluting it, and the DPDP layer is exactly the kind of compliance-aware HITL that Indian enterprise roles test for.

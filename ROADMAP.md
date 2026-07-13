@@ -2,6 +2,13 @@
 
 **Eighteen projects.** The original 8 (from `AI-Agent-Project-Ideas.md`), + 4 Sonnet added for MCP authoring / RAG depth / safety / CI/CD (09–12), + 3 from the Fable-5 revision for observability / memory / computer-use (13–15), + **3 from the final gap sweep of `500-AI-Agents-Projects`** for the last genuinely-uncovered patterns: **16 Multimodal**, **17 Voice/Real-Time**, **18 Local/Offline**. Full plans, first-principles teaching notes, and verified resource lists for all 18 live in `projects/<NN-name>/`. `AUDIT.md` records the audit of the prior version; **`LEARNING-GUIDE.md` is the companion to this file** — it explains every project (what it is, real-world use, skills, where they go next) in the exact order below. This ROADMAP and LEARNING-GUIDE are one source of truth; if they ever disagree, they're both wrong.
 
+## India-first localization (read alongside the contracts)
+
+Every project is localized for the Indian market by default (see each PLAN.md §10 "Localization"); the **technical curriculum is unchanged** — only data sources, document types, regulators, currency, and examples are Indian. Setup impact is minimal: the new data libraries are all `pip install` (yfinance `.NS`/`.BO`, `nsepython`, `jugaad-data`, `bsedata`, AI4Bharat models, Ollama for local). Key points:
+- **Project 01** swaps SEC filings → NSE/BSE annual reports/results and introduces a **ports-&-adapters data layer** so "worldwide mode" (US/global) is a config flag, not a rewrite — a portfolio-worthy engineering lesson in itself.
+- **Deep-localized** (domain/data materially Indian): 01 (NSE/BSE), 02 (GST/KYC + DPDP Act), 05 (NSE bhavcopy demo; Spider benchmark unchanged), 11 (Aadhaar/PAN/UPI PII + DPDP), 16 (GST invoices/Indian docs), 17 (Hindi/Hinglish + AI4Bharat voice), 18 (DPDP data-residency + Indian open models). 04 gains IST/Indian-job-board/UPI-expense context; 10 reuses 01's Indian corpus.
+- **Location-neutral by design** (stated explicitly, not forced): 03, 06, 07, 08, 09, 12, 13, 14, 15 — their patterns carry no market assumptions; India shows through only via the Indian agents they instrument/evaluate/orchestrate.
+
 ## Shared contracts (read first — what makes the set cohere)
 
 - **Target Agent Contract.** A compliant agent exposes HTTP `/invoke` returning `{output, trajectory, version, cost_usd, latency_ms}`, where `trajectory` is the ordered tool calls with tokens/latency (or an OTel GenAI export). **Emitted by** 01, 02, 05, 08, 15, 16. **Consumed by** 03 (eval), 11 (guardrail), 12 (release gate), 17 (voice brain). **Reference implementation:** Project 13.

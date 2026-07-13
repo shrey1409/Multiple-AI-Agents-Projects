@@ -133,3 +133,16 @@ Defense in depth: the **Static Guard** parses every query with `sqlglot` and rej
 - [ ] 100-question stratified Spider subset run; execution accuracy + self-healing rate reported honestly.
 - [ ] Chart + narrative works on final results.
 - [ ] Dockerized, deployed, README leads with the benchmark number.
+
+## 10. Localization (India-first)
+
+**Deep-localized on data, benchmark preserved.** The self-correction loop, the structural read-only safety boundary, the sqlglot guard, and the bounded-retry curriculum are all unchanged. What changes is the *demo database* and the example questions — plus an important note on keeping the benchmark honest.
+
+**What changed (datasets + examples — not architecture):**
+- **Demo database (India):** in addition to the benchmark, ship a genuinely useful Indian analytics DB — **NSE bhavcopy** (daily OHLCV for all NSE stocks, fetched free via `jugaad-data`) loaded into SQLite/Postgres, so you can ask "top 10 gainers in the auto sector last month" or "average delivery % for NIFTY 50 stocks." This is real data *you* care about as an NSE trader. An Indian e-commerce/retail dataset is an alternative if you prefer non-market data.
+- **Example questions & formatting:** INR, lakh/crore, Indian company names; the narrative/chart layer formats ₹ correctly.
+- **Read-only mechanism:** unchanged (SQLite `mode=ro` + `PRAGMA query_only`; Postgres `GRANT SELECT`).
+
+**Benchmark stays global (deliberate trade-off).** The accuracy number is still reported on the **Spider** benchmark, not the Indian DB. Reason: Spider is the standardized, published text-to-SQL benchmark — swapping it for a custom Indian DB would make the headline metric non-comparable and *weaken* the resume claim (the exact "vague benchmark" failure the plan warns against). So: **learn and benchmark on Spider; demo and dogfood on NSE bhavcopy.** This dual setup is itself a good lesson — benchmark on the standard, demo on what's useful.
+
+**What stayed global:** every architecture and eval element. Only the demo DB and examples are Indian.

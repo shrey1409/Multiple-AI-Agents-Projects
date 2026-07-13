@@ -135,3 +135,11 @@ Actions are classified `reversible` vs. not. Irreversible (submit payment, place
 - [ ] Irreversible actions structurally gated — 0 taken without confirmation, code-verified.
 - [ ] Re-plan/recovery demonstrated on failing tasks.
 - [ ] Screencast demo + README with the benchmark table and a live-run clip.
+
+## 10. Localization (India-first)
+
+**Location-neutral pattern; optionally India-flavored targets.** GUI perception (a11y-tree-first + vision fallback), the typed action space, failure recovery, and the structural irreversible-action gate are universal computer-use skills, unchanged.
+
+**Optional India flavor (target sites only, no architecture change):** the benchmark's controlled/sandbox sites can mimic **Indian portals** an Indian user actually automates — an IRCTC-style booking flow, a GST-portal-style form, a government-services form. Keep scoring on your own self-hosted deterministic clones (never live IRCTC/government sites — non-deterministic, and automating real government/ticketing portals raises ToS/legal issues). The irreversible-action gate maps naturally to "don't actually submit the booking/payment."
+
+**What stayed global:** the entire computer-use curriculum; only the demo sites are optionally Indian.

@@ -128,3 +128,16 @@ class VariantRunResult(TypedDict):
 - [ ] Full RAGAS + latency/cost grid (5 × 3) generated, with spread/CI noted.
 - [ ] ≥1 qualitative example per variant showing a distinguishing behavior.
 - [ ] README leads with the grid and a data-backed "use X when Y" recommendation.
+
+## 10. Localization (India-first)
+
+**Corpus-localized, method preserved.** The controlled experiment — four RAG variants over one frozen corpus/index/question set, scored with RAGAS — is unchanged. Only the shared corpus and questions are Indian.
+
+**What changed (data only):**
+- **Shared corpus:** reuse **Project 01's Indian annual reports / quarterly results** (financial docs are dense with genuine multi-hop content — facts split across the Directors' Report and the Notes, ideal for the `multi_hop` category). Alternatively, an Indian-domain corpus (RBI circulars, SEBI regulations) works.
+- **Question set:** 40+ questions about Indian companies/regulations across the three categories (easy-factual / multi-hop / no-answer-in-corpus); INR/lakh-crore in gold answers.
+- The frozen config (embedding model, chunk size, k, index) is unchanged — that's the experiment's control.
+
+**What stayed global:** all four variant implementations, the naive baseline, RAGAS scoring, the variant×category grid, and the controlled-experiment methodology. Nothing about the RAG curriculum is Indian.
+
+**Trade-off:** an Indian corpus is a strict positive (more useful to you, same rigor); the *only* caution is to keep the corpus frozen once chosen, exactly as the original demands.

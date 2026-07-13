@@ -123,3 +123,11 @@ A small library exposing decorators/context managers: `@traced_node`, `traced_to
 - [ ] Overhead <5%; cost reconciliation within 5%.
 - [ ] Project 02 instrumented via the wrapper with zero wrapper changes.
 - [ ] `agent-otel` packaged; README has a real "I debugged X by reading the trace" story.
+
+## 10. Localization (India-first)
+
+**Location-neutral — deliberately left global.** OpenTelemetry GenAI semantic conventions, span/trace instrumentation, cost/latency attribution, and the Target Agent Contract are vendor- and market-neutral infrastructure. Nothing here is Indian.
+
+**India shows through only by inheritance:** it instruments Projects 01/02 (now Indian), so the traces are of Indian agents — but the tracing schema, collector, and dashboards are identical everywhere. One small, useful India note: display **cost in ₹** alongside USD on the cost dashboard (LLM tokens are billed in USD; an INR column is a one-line view-layer convenience for an India-based operator).
+
+**What stayed global:** the entire observability stack.

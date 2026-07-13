@@ -125,3 +125,11 @@ class Memory(TypedDict):
 - [ ] 50-question multi-session benchmark run; ≥15pp gain over naive on the consolidation subset; ≥70% token savings.
 - [ ] Packaged as a service + client library; plugged into Project 04.
 - [ ] README with the benchmark table and the memory-type design explained.
+
+## 10. Localization (India-first)
+
+**Location-neutral core; Indian examples only.** The memory architecture — episodic/semantic/procedural types, write/consolidate/forget/supersede policies, and the benchmark-vs-naive-baseline methodology — has no market assumptions and is unchanged.
+
+**What changed (examples only):** the multi-session benchmark conversations use Indian personas and context (IST times, ₹ amounts, Indian preferences like "don't schedule during Diwali week"), and when this service plugs into Project 04 it inherits that agent's Indian context. The memory *mechanisms* are identical.
+
+**What stayed global:** everything about the memory curriculum.

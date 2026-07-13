@@ -127,3 +127,18 @@ class VoiceSessionState(TypedDict):
 - [ ] Barge-in stops the agent <300ms and re-routes.
 - [ ] Turn-detection false-cutoff <10%; WER reported.
 - [ ] 15-scenario spoken-task eval; a recorded demo call; README leads with the latency-budget table.
+
+## 10. Localization (India-first)
+
+**Deep-localized on language/accent; every real-time mechanism preserved.** Streaming STT→LLM→TTS, latency budgeting, barge-in, and turn detection are unchanged — but India is where voice AI is exploding (vernacular customer support, IVR replacement), and Indian languages make the project both more useful and more impressive.
+
+**What changed (languages, models, use case — not architecture):**
+- **Languages:** English-only → **Indian-accented English + Hindi, with Hinglish code-mixing** (users switch languages mid-sentence — a genuine, hard, India-specific challenge that showcases robustness).
+- **STT:** Whisper (handles Indian-accented English + Hindi acceptably) as the default; **AI4Bharat IndicASR / IndicConformer** as the higher-accuracy Indian-language option.
+- **TTS:** an Indian-voice TTS — **AI4Bharat Indic-TTS** (or a hosted Indian-voice API) so the agent sounds natural to Indian users, not a foreign accent.
+- **Use case:** the demo is an **Indian phone-support / appointment-booking bot** (the archetypal Indian voice-AI product — think a clinic or a bank's vernacular IVR), with the "brain" being Project 04 (personal ops) or Project 01 (research) unchanged behind the voice layer.
+- **Latency framing:** note India's network variability (mobile-first, variable latency) as an extra reason the streaming/latency-budget curriculum matters.
+
+**What stayed global (unchanged):** the streaming pipeline architecture, latency budgeting, barge-in/turn-detection, and the reuse of an existing agent as the brain via the Target Agent Contract. The real-time-systems curriculum is intact; only the language models and demo scenario are Indian.
+
+**Trade-off recorded:** Indian-language ASR/TTS is harder and sometimes lower-accuracy than English — that's a *feature* for learning (you confront real code-mixing and accent robustness), but budget extra eval time. Keep an English-only mode too (worldwide compatibility), so the pipeline is language-pluggable, mirroring Project 01's adapter lesson.

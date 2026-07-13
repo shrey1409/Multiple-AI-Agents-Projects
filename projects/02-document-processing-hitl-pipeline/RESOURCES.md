@@ -44,3 +44,9 @@ git clone --depth 1 https://github.com/agno-agi/agno.git /tmp/ref-agno
 
 ## 3. Data
 - **Synthetic, not real.** Generate ~500 invoices/claims/contracts with an LLM that emits document + ground-truth JSON together (§5 of PLAN.md). Supplement with a few publicly redacted samples. Do **not** use real customer/PII data.
+
+## 4. India-specific (localization)
+- **No new repos — data stays synthetic.** Generate format-valid fake GST invoices, insurance claims, and KYC docs (PAN `[A-Z]{5}[0-9]{4}[A-Z]`, format-valid but fake Aadhaar with a correct **Verhoeff** check digit) + ground-truth JSON. **Never use real Aadhaar/PAN.**
+- **GSTIN checksum:** GSTIN's 15th char is a checksum over the first 14 (mod-36) — implement it as a deterministic validation rule (a great "validate, don't pattern-match" example). Spec: search "GSTIN check digit algorithm" (GSTN documentation).
+- **DPDP Act 2023 (learning reference):** read the Act's data-minimization + purpose-limitation principles (meity.gov.in) — the "why" behind masking Aadhaar to last-4 and treating the audit log as a processing record.
+- **Regulators for context:** GSTN (tax), IRDAI (insurance), RBI (banking KYC).
