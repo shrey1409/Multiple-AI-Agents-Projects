@@ -39,3 +39,9 @@ These are the 500-repo "Multimodal Agents" entries. Read for how a multimodal ag
 
 ## 4. Reused across the portfolio
 - Corpus from Project 01; hybrid-fusion idea from Project 06; Target Agent Contract for observability (03/13).
+
+## 4. India-specific documents (localization)
+- **Layout parser** (unchanged): Docling (`DS4SD/docling`, verified) handles GST invoices, annual-report tables/charts, and scanned Indian forms — typed elements + bounding boxes.
+- **Documents (synthetic/masked):** GST tax invoices (GSTIN/HSN/tax-split tables), annual-report segment tables + promoter-holding charts (reuse Project 01's Indian corpus), and **masked** Aadhaar/PAN card images (last-4 only — DPDP; never real).
+- **Table-fidelity targets:** the GST tax-split table and AR segment tables are the cell-F1 (≥90%) benchmark set.
+- **Vision retrieval:** ColPali (`illuin-tech/colpali`, verified) for the chart/figure subset — unchanged method, Indian visuals.

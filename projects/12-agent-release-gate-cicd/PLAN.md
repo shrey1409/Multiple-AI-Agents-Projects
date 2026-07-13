@@ -124,3 +124,11 @@ A protected repo must: (a) be launchable in CI via its `launch` command; (b) exp
 - [ ] Same Action protects Project 01 and 02 by config only — byte-identical source diff.
 - [ ] CI runtime + cost measured and reported.
 - [ ] Fork-secret handling documented; README lets a stranger adopt it.
+
+## 10. Localization (India-first)
+
+**Location-neutral — deliberately left global.** CI/CD for agents (eval-as-a-GitHub-Action, baseline-relative regression, config-in-target-repo reusability) is pure software-engineering infrastructure with zero market or regulatory content. Localizing it would add nothing.
+
+**India shows through only by inheritance:** its target repos are Projects 01/02, which are now Indian — so the scenarios the gate runs are Indian, but the gate itself (packaging, tolerance bands, PR scorecard, fork-secret handling) is identical everywhere.
+
+**What stayed global:** everything.

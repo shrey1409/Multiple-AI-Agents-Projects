@@ -36,3 +36,15 @@ curl -O https://raw.githubusercontent.com/microsoft/autogen/0.2/notebook/agentch
 ## 3. Also useful
 - `sqlglot` (`pip install sqlglot`) — parse generated SQL into an AST for the static statement-type guard (Phase 0) and for nicer, structured error feedback than a raw driver exception.
 - `shrey1409/500-AI-Agents-Projects` → `agents/04-sql-query-agent/` — a simple single-file NL-to-SQL agent; skim for prompt ideas, not architecture.
+
+## 3. India-specific demo data (localization)
+Benchmark stays on **Spider** (unchanged). For the India demo DB, load **NSE bhavcopy** (free, no auth) via `jugaad-data` (PyPI `jugaad-data 0.33.1`, verified):
+```bash
+pip install jugaad-data
+python - <<'PY'
+from jugaad_data.nse import bhavcopy_save
+from datetime import date
+bhavcopy_save(date(2024,1,15), "./")   # daily NSE OHLCV CSV -> load into SQLite/Postgres
+PY
+```
+Then ask the agent "top 10 gainers in the auto sector last month", "avg delivery % for NIFTY 50" etc. INR/lakh-crore in the narrative layer. (An Indian e-commerce/retail open dataset from data.gov.in or Kaggle is an alternative if you prefer non-market data.)

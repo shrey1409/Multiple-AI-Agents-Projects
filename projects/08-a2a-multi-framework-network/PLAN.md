@@ -134,3 +134,11 @@ Discovery is the **well-known URI** `GET /.well-known/agent-card.json` per RFC 8
 - [ ] Framework-swap interop proof done, with a byte-identical coordinator diff.
 - [ ] Latency overhead measured and reported.
 - [ ] Docker Compose brings up all 4; README tells the MCP+A2A interop story.
+
+## 10. Localization (India-first)
+
+**Location-neutral pattern — deliberately left global.** A2A protocol interop, framework-agnostic orchestration, and MCP+A2A-together are universal skills with no market assumptions. The protocol, agent-card discovery, and swap-a-framework proof are identical everywhere.
+
+**India shows through by inheritance (no architecture change):** this project rebuilds three of **Project 01's specialists**, which are now Indian (market-data over `.NS`/`.BO`, news over Moneycontrol/ET, fundamentals over Indian filings). So the network's *data* is Indian, but the A2A/MCP wiring — the actual subject — is market-neutral. The `AgentSkill` descriptions in the agent cards will name Indian capabilities ("fetch NSE quote"), which is cosmetic.
+
+**What stayed global:** the entire A2A/MCP interop curriculum.

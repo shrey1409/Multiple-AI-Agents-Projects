@@ -44,3 +44,9 @@ Port **Project 05** (self-healing SQL — structured-output-heavy, so the gramma
 ## 4. Also useful
 - `outlines` (JSON-schema-guided decoding) as an alternative to GBNF if you serve via vLLM.
 - A local embedding model (e.g., a small `bge`/`gte` GGUF or sentence-transformers offline) so RAG is genuinely offline.
+
+## 4. India-specific motivation + models (localization)
+Systems curriculum unchanged; India-tuned drivers and models:
+- **Runtimes** (unchanged): Ollama (`ollama/ollama`), llama.cpp (`ggml-org/llama.cpp`), vLLM (`vllm-project/vllm`) — all verified.
+- **Indian-language open models:** **AI4Bharat** models (`github.com/AI4Bharat`, verified) for Indic; India-built LLMs (Sarvam, Krutrim families) for on-prem Hindi/Indic serving — pairs with Project 17 (offline vernacular voice) and Project 02/11 (on-prem PII under DPDP).
+- **Why local, in India:** **DPDP Act** data-residency (a bank/hospital may not send PII to a foreign API), **₹ cost** at scale, and **low-connectivity** offline operation. Report the hosted-vs-local quality/cost gap in ₹ — the honest measurement is the deliverable.

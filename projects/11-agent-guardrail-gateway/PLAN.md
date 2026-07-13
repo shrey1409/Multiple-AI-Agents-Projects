@@ -129,3 +129,17 @@ class GatewayConfig(TypedDict):
 - [ ] Red-team eval run; PII recall, injection block rate, FP rate, budget integrity reported per §6.
 - [ ] Allow-list/escalation integrity verified by a code-level test.
 - [ ] Dockerized; README leads with the red-team table and an honest coverage-limits statement.
+
+## 10. Localization (India-first)
+
+**Deep-localized on PII patterns + regulatory framing; every safety mechanism preserved.** This project *gains* from Indian localization because Indian PII (Aadhaar, PAN, UPI IDs) has well-defined, checkable formats — perfect material for the deterministic-detection curriculum — and the DPDP Act gives the guardrail a real compliance purpose.
+
+**What changed (PII patterns, regulatory context — not architecture):**
+- **PII detectors (regex layer):** add Indian formats — **Aadhaar** (12 digits, **Verhoeff checksum** — a superb deterministic-validation example, stronger than the US SSN case), **PAN** (`[A-Z]{5}[0-9]{4}[A-Z]`), **UPI VPA** (`name@bank`), **Indian mobile** (`+91` / 10-digit starting 6–9), **IFSC** (`[A-Z]{4}0[A-Z0-9]{6}`), **GSTIN**. The Luhn/checksum lesson generalizes to Verhoeff (Aadhaar) — a genuine upgrade to the "validate, don't just pattern-match" teaching.
+- **NER layer:** add Indian name/place handling (spaCy multilingual or IndicNER) so unstructured Indian names are caught.
+- **Regulatory framing:** OWASP framing stays; add the **DPDP Act 2023** as the "why" — the gateway is a **data-processor control** enforcing data minimization and purpose limitation. Masking Aadhaar to last-4 is the canonical DPDP-compliant behavior.
+- **Formatting/limits:** spend limits in ₹.
+
+**What stayed global (unchanged):** the reverse-proxy gateway, heuristic-first injection detection, atomic Redis rate/spend limiting, the deterministic allow-list, HITL escalation, the black-box Target Agent Contract, log-findings-not-values, and the red-team eval methodology. Every mechanism intact; the DPDP framing is additive.
+
+**Trade-off:** none of substance — Indian PII formats are a superset that makes the detection curriculum *richer* (Verhoeff > Luhn as a teaching case). Keep the US patterns too (worldwide mode) so the gateway is market-agnostic in code, India-tuned by config — mirroring Project 01's adapter lesson.

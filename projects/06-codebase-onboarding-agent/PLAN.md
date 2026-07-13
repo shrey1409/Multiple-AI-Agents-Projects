@@ -138,3 +138,11 @@ Note the asymmetry Sonnet glossed: `tree-sitter` gives you multi-language *chunk
 - [ ] README/diagram/issue-list manually verified on all 5 repos.
 - [ ] Live run on a repo not in the original 5 (tested before "done").
 - [ ] Dockerized, deployed, README complete.
+
+## 10. Localization (India-first)
+
+**Location-neutral — deliberately left global.** Source code has no nationality; AST-aware chunking, hybrid code retrieval, verified file:line citation, and static import-graph analysis are identical everywhere. Forcing Indian specifics would add nothing.
+
+**Optional flavor (no architecture change):** pick a few **Indian open-source repos** for the 5-repo eval set (e.g. a well-known Indian company's OSS, or an AI4Bharat repo) so the live demo resonates in India-based interviews — but this is cosmetic; any repos work. The held-out live-demo repo can be the interviewer's own, Indian or not.
+
+**What stayed global:** everything.

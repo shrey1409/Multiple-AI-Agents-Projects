@@ -134,3 +134,18 @@ def execute(action: ApprovedAction): ...   # signature requires an ApprovedActio
 - [ ] 2-week (or replayed) trial logged with FP rate.
 - [ ] Memory recall self-test reported; supersede policy demonstrated.
 - [ ] One server packaged standalone with its own README.
+
+## 10. Localization (India-first)
+
+**Deep-localized** — this is the most personally useful project to localize, and every MCP/HITL/memory concept survives unchanged. Only the tools' data sources and the scheduling/formatting context are Indian.
+
+**What changed (tool data + context — not architecture):**
+- **Calendar/scheduling:** default timezone **IST (Asia/Kolkata)**; `find_free_slots` respects Indian working hours and the **Indian holiday calendar** (national + regional); the calendar MCP server exposes an `india_holidays` resource. (The `find_free_slots` interval algorithm is unchanged — only the working-hours/holiday config is Indian.)
+- **GitHub server:** unchanged (code is global) — but the "proactive digest" can prioritize IST-friendly review windows.
+- **Notes/jobs context:** the proactive checks add **Indian job-board signals** (Naukri, Instahyre, LinkedIn India, Wellfound India) alongside GitHub PRs — useful for an India-based engineer's daily digest.
+- **New optional MCP server — UPI-style expense tracker:** a fourth MCP server wrapping a local expense ledger with **UPI-transaction-style entries** (payee VPA, amount in ₹, category), demonstrating the same authoring pattern on an India-relevant domain. Reads only a local CSV/SQLite the user maintains — **no real bank/UPI integration, no PII** (this is a learning tool; connecting to a real Account Aggregator / UPI is explicitly out of scope and would trigger RBI/NPCI compliance).
+- **Formatting:** ₹, IST timestamps, DD-MM-YYYY dates.
+
+**What stayed global (unchanged):** MCP authoring vs. consumption, Streamable HTTP transport, MCP Inspector compliance, the structural approval gate, the memory-lite store and its supersede policy, proactive scheduling. Every learning objective intact.
+
+**Trade-off recorded:** the UPI expense server is optional; if you'd rather keep the trilogy identical to the original (calendar/GitHub/notes), do so — the localization is additive, not a swap. The IST/holiday context, by contrast, is a strict improvement for an India-based user with zero curriculum cost.

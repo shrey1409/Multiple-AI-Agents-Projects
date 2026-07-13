@@ -128,3 +128,11 @@ class ArenaState(TypedDict):
 - [ ] ≥5 arena runs vs. the fixed ~15, scorecard aggregated (coverage, MTTD, MTTP distributions).
 - [ ] Patch proposals human-reviewable only, never auto-applied.
 - [ ] README leads with scope/safety and frames results around defensive evaluation.
+
+## 10. Localization (India-first)
+
+**Location-neutral pattern — deliberately left global.** The FSM-constrained orchestration, isolated-lab discipline, fixed-probe-library safety design, and detection/response (MTTD/MTTP) metrics are universal security-engineering skills. OWASP Juice Shop stays as the deliberately-vulnerable target (it's the standard, and swapping it buys nothing).
+
+**Optional India framing (writeup only, no architecture change):** the defensive-research writeup can reference **CERT-In** (India's national computer emergency response team, under MeitY) incident-reporting norms and the DPDP Act's breach-notification duty as the "why this matters in India" context — a nice touch for security-adjacent Indian roles. This changes the README framing, not the lab.
+
+**What stayed global:** the entire arena, FSM referee, isolation verification, and scoring.

@@ -121,3 +121,17 @@ class MMState(TypedDict):
 - [ ] ≥25pp vision uplift on the chart/table subset; table cell-F1 ≥90%.
 - [ ] 100% region-grounded citations (code-checked).
 - [ ] Upload-a-PDF demo highlighting the cited region; Docker; README leads with the vision-uplift table.
+
+## 10. Localization (India-first)
+
+**Deep-localized on document types; every vision-language mechanism preserved.** Layout parsing, the text-vs-visual retrieval benchmark, region-grounded citation, and table-fidelity scoring are unchanged — only the documents are Indian, which makes this project *directly* useful and demo-worthy in India.
+
+**What changed (document types — not architecture):**
+- **Documents:** US filings/reports → **GST invoices** (visual layout: GSTIN block, HSN/SAC table, tax-split table), **Indian annual-report charts/tables** (reuse Project 01's corpus — segment revenue tables, promoter-holding pie charts), **scanned Indian forms** (bank/KYC forms, utility bills), and **Aadhaar/PAN card images** *with masking* (last-4 only; ties to the DPDP discipline from Projects 02/11 — never store full Aadhaar). 
+- **Table extraction:** the GST tax-split table and annual-report segment tables are the cell-fidelity benchmark targets — genuinely structure-dependent, exactly what the ≥90% cell-F1 metric needs.
+- **Vision-uplift benchmark:** the chart/table subset uses Indian annual-report visuals, where the multimodal path must beat text-only by ≥25pp.
+- **Formatting:** ₹, lakh/crore in extracted values.
+
+**What stayed global (unchanged):** the layout parser, the two-strategy (parse-and-embed-text vs. embed-page-image/ColPali) benchmark, region-grounded citation as a deterministic check, hybrid fusion, and the Target Agent Contract emission. Every learning objective intact.
+
+**Trade-off / privacy note:** Aadhaar/PAN card understanding is a real Indian use case (fintech onboarding) but a DPDP-sensitive one — use **masked synthetic samples only** for the eval, and make masking part of the pipeline output. This is additive learning (document-AI + data-protection), not a change to the vision curriculum.

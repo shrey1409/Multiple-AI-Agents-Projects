@@ -39,3 +39,10 @@ Your primary source for a defensible, documented injection pattern library and t
 
 ## 3. Target agent
 Reuse Project 01's Contract-compliant endpoint as the protected target. The allow-list reads proposed actions from the target's returned `trajectory` (Target Agent Contract) — build Project 01 (or 02) first, or stub a Contract-shaped endpoint.
+
+## 4. India-specific PII (localization)
+Add Indian PII detectors alongside the US patterns (worldwide mode keeps both):
+- **Aadhaar** — 12 digits with a **Verhoeff** checksum (the last digit validates the first 11). Implement Verhoeff (standard algorithm; search "Verhoeff algorithm Aadhaar validation") — a stronger deterministic-validation lesson than Luhn. **Mask to last-4.**
+- **PAN** `^[A-Z]{5}[0-9]{4}[A-Z]$`, **UPI VPA** `^[\w.\-]+@[\w]+$`, **Indian mobile** `^(\+91|0)?[6-9]\d{9}$`, **IFSC** `^[A-Z]{4}0[A-Z0-9]{6}$`, **GSTIN** (15-char with checksum).
+- **NER for Indian names/places:** spaCy multilingual, or **AI4Bharat IndicNER** (github.com/AI4Bharat — org verified). `indic-transliteration` (PyPI, verified) helps normalize scripts.
+- **DPDP Act 2023** — the regulatory "why"; the gateway is a data-processor control (data minimization, purpose limitation).

@@ -153,3 +153,11 @@ With n≈30 runs, `success_rate` is a proportion with real variance. Decision:
 - [ ] 3/3 injected regressions caught.
 - [ ] Dashboard shows version-over-version; GitHub Action posts a scorecard on a demo PR.
 - [ ] README documents an actual regression caught, with before/after numbers.
+
+## 10. Localization (India-first)
+
+**Location-neutral — deliberately left global.** An eval/observability harness measures *any* agent; its patterns (LLM-as-judge, judge calibration with Cohen's κ, simulated users, regression detection) carry no market or regulatory assumptions. Forcing Indian specifics here would add nothing and risk implying the skill is India-only, which it isn't.
+
+**The one place India shows through (no architecture change):** when this harness points at Project 01 (its default target), the **scenarios and success criteria become Indian by inheritance** — e.g. "get a research brief for RELIANCE.NS", an adversarial persona that supplies a wrong BSE scrip code, or a scenario checking the report flags an undisclosed promoter pledge. The judge rubric gains no India logic; only the target's inputs are Indian. If you later evaluate an Indian-language agent (e.g. Project 17's Hindi voice bot), the judge must itself be multilingual — noted as a forward dependency, not built here.
+
+**What stayed global:** everything — the harness is the reusable, market-agnostic core of the portfolio.
